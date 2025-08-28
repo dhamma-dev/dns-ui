@@ -1,0 +1,194 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DNS • Monitoring Points</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  {% include "_base_style.html" %}
+  <style>
+    .drawer{position:fixed;top:0;right:-560px;width:560px;max-width:100%;height:100vh;background:#fff;
+      box-shadow:-12px 0 40px rgba(0,0,0,.16);transition:right .28s ease;padding:16px 16px 22px;z-index:1000;overflow:auto}
+    .drawer.open{right:0}
+    .drawer header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .chip{background:#f7fafc;border:1px solid #e2e8f0;border-radius:999px;padding:6px 10px;margin-right:6px;display:inline-block}
+    .heat{border-collapse:collapse}
+    .heat th,.heat td{border:1px solid #e2e8f0;padding:4px 6px;font-size:.82rem;text-align:center}
+    .legend{display:flex;gap:8px;align-items:center;margin:6px 0}
+    .swatch{width:18px;height:12px;display:inline-block;border:1px solid #e2e8f0}
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h2>📍 Monitoring Points</h2>
+      <div class="nav" style="margin-top:6px">
+        <a href="/">Dashboard</a>
+        <a href="/servers">Servers</a>
+        <a href="/consistency">Consistency</a>
+        <a href="/time-compare">Time Compare</a>
+        <a href="/points"><strong>Points</strong></a>
+      </div>
+    </div>
+    <div class="filters">
+      <input id="q" placeholder="Search GUID / interface…">
+      <select id="hours"><option>1</option><option>6</option><option selected>24</option><option>72</option><option>168</option></select>
+      <button class="btn" onclick="loadPoints()">Apply</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+      <h3>Health by Monitoring Point</h3>
+      <span class="pill" id="count">—</span>
+    </div>
+    <div style="overflow:auto;max-height:520px;margin-top:8px">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th>Point</th><th>Samples</th><th>Error %</th><th>Avg</th><th>p95</th><th>p99</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Drawer -->
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <header>
+    <h3 id="dw-title">Point</h3>
+    <button class="btn" onclick="closeDrawer()">Close</button>
+  </header>
+  <div id="dw-meta"></div>
+  <div class="chip" id="dw-kpi-samples">Samples: —</div>
+  <div class="chip" id="dw-kpi-err">Error %: —</div>
+  <div class="chip" id="dw-kpi-p95">p95: —</div>
+
+  <h4 style="margin-top:10px">Trend</h4>
+  <div style="height:220px"><canvas id="dw-trend"></canvas></div>
+
+  <h4 style="margin-top:10px">Top Domains</h4>
+  <div id="dw-domains" style="font-size:.9rem"></div>
+
+  <h4 style="margin-top:10px">Top DNS Servers</h4>
+  <div id="dw-servers" style="font-size:.9rem"></div>
+
+  <h4 style="margin-top:10px">Record Types</h4>
+  <div id="dw-types" style="font-size:.9rem"></div>
+
+  <h4 style="margin-top:10px">Hour × Domain Heatmap (p95)</h4>
+  <div class="legend">
+    <span>Low</span><span class="swatch" style="background:#e6f4ea"></span>
+    <span class="swatch" style="background:#cce9d5"></span>
+    <span class="swatch" style="background:#ffd7b3"></span>
+    <span class="swatch" style="background:#ffb3b3"></span><span>High</span>
+  </div>
+  <div style="overflow:auto">
+    <table class="heat" id="dw-heat"></table>
+  </div>
+</aside>
+
+<script>
+let _trend;
+function fmtms(n){ return Math.round(n||0)+'ms'; }
+function pct(n){ return (n||0).toFixed(2)+'%'; }
+function openDrawer(){ const d=document.getElementById('drawer'); d.classList.add('open'); d.setAttribute('aria-hidden','false'); }
+function closeDrawer(){ const d=document.getElementById('drawer'); d.classList.remove('open'); d.setAttribute('aria-hidden','true'); }
+
+async function loadPoints(){
+  const hours = document.getElementById('hours').value;
+  const q = (document.getElementById('q').value||'').toLowerCase();
+  const {data} = await axios.get('/api/points_summary?hours='+hours);
+  const rows = q ? data.filter(x => (x.appliance_guid||'').toLowerCase().includes(q) || (x.interface||'').toLowerCase().includes(q)) : data;
+
+  document.getElementById('count').textContent = `${rows.length} points`;
+
+  const tb = document.querySelector('#tbl tbody');
+  tb.innerHTML = rows.map(r=>{
+    const cls = r.error_rate>1 ? 'bad' : (r.error_rate>0 ? 'warn' : 'ok');
+    const pid = `${r.appliance_guid}::${r.interface}`;
+    return `<tr>
+      <td><a href="javascript:void(0)" onclick="loadPointDetail('${r.appliance_guid}','${r.interface||''}')">${pid}</a></td>
+      <td>${r.samples}</td>
+      <td class="${cls}">${pct(r.error_rate)}</td>
+      <td>${fmtms(r.avg)}</td>
+      <td><strong>${fmtms(r.p95)}</strong></td>
+      <td>${fmtms(r.p99)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function colorFor(ms){
+  // simple 4-stop ramp
+  if(ms<=50) return '#e6f4ea';
+  if(ms<=100) return '#cce9d5';
+  if(ms<=200) return '#ffd7b3';
+  return '#ffb3b3';
+}
+
+async function loadPointDetail(ag, iface){
+  openDrawer();
+  const hours = document.getElementById('hours').value;
+  const p = new URLSearchParams({appliance_guid: ag, hours});
+  if(iface) p.append('interface', iface);
+  const {data} = await axios.get('/api/point_detail?'+p.toString());
+
+  document.getElementById('dw-title').textContent = `${data.appliance_guid} :: ${data.interface||'—'}`;
+  document.getElementById('dw-meta').innerHTML = `<div class="chip">Window: ${hours}h</div>`;
+  document.getElementById('dw-kpi-samples').textContent = 'Samples: '+(data.samples||0);
+  document.getElementById('dw-kpi-err').textContent = 'Error %: '+pct(data.error_rate);
+  document.getElementById('dw-kpi-p95').textContent = 'p95: '+fmtms(data.p95);
+
+  // Trend chart
+  const ctx = document.getElementById('dw-trend').getContext('2d');
+  if(_trend) _trend.destroy();
+  const labels = data.timeseries.map(x=>new Date(x.ts).toLocaleString());
+  _trend = new Chart(ctx, {
+    type:'line',
+    data:{labels, datasets:[
+      {label:'Avg (ms)', data:data.timeseries.map(x=>x.avg)},
+      {label:'p95 (ms)', data:data.timeseries.map(x=>x.p95)},
+      {label:'Err %', data:data.timeseries.map(x=>x.err), yAxisID:'y1'}
+    ]},
+    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+      scales:{y:{title:{display:true,text:'ms'}, beginAtZero:true}, y1:{position:'right', grid:{drawOnChartArea:false}, beginAtZero:true, title:{display:true,text:'%'}}}
+  }});
+
+  // Top domains
+  document.getElementById('dw-domains').innerHTML = (data.top_domains||[]).map(x =>
+    `<div>${x.domain} — count ${x.count}, p95 ${fmtms(x.p95)}, <span class="${x.error_rate>0?'bad':'ok'}">${pct(x.error_rate)}</span></div>`
+  ).join('') || '<div class="pill">No data</div>';
+
+  // Top servers
+  document.getElementById('dw-servers').innerHTML = (data.servers||[]).map(x =>
+    `<div>${x.dns_server} — count ${x.count}, p95 ${fmtms(x.p95)}, <span class="${x.error_rate>0?'bad':'ok'}">${pct(x.error_rate)}</span></div>`
+  ).join('') || '<div class="pill">No data</div>';
+
+  // Types
+  document.getElementById('dw-types').innerHTML = (data.record_types||[]).map(x =>
+    `<span class="chip">${x.type||'(none)'} • ${x.count} • ${pct(x.error_rate)}</span>`
+  ).join('') || '<div class="pill">No data</div>';
+
+  // Heatmap
+  const hm = data.heatmap || {domains:[], rows:[]};
+  const table = document.getElementById('dw-heat');
+  table.innerHTML = '';
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th>Hour</th>'+hm.domains.map(d=>`<th>${d}</th>`).join('')+'</tr>';
+  const tbody = document.createElement('tbody');
+  hm.rows.forEach(r=>{
+    const tr = document.createElement('tr');
+    const hour = new Date(r.ts).toLocaleString();
+    tr.innerHTML = `<td>${hour}</td>` + r.cells.map(v => `<td style="background:${colorFor(v)}">${v?Math.round(v):''}</td>`).join('');
+    tbody.appendChild(tr);
+  });
+  table.appendChild(thead); table.appendChild(tbody);
+}
+
+document.addEventListener('DOMContentLoaded', loadPoints);
+</script>
+</body>
+</html>

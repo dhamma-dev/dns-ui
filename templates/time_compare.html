@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DNS • Time Compare</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  {% include "_base_style.html" %}
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h2>⏱️ Time-Window Comparison</h2>
+        <div class="nav" style="margin-top:6px">
+          <a href="/">Dashboard</a>
+          <a href="/servers">Servers</a>
+          <a href="/consistency">Consistency</a>
+          <a href="/time-compare"><strong>Time Compare</strong></a>
+        </div>
+      </div>
+      <div class="filters">
+        <select id="domain"></select>
+        <input id="server" placeholder="DNS server (optional)">
+        <select id="rtype"><option value="">Any Type</option><option>A</option><option>AAAA</option><option>CNAME</option></select>
+        <label>Window A (hrs) <input id="ha" type="number" min="1" value="1" style="width:80px"></label>
+        <label>Window B (hrs) <input id="hb" type="number" min="1" value="1" style="width:80px"></label>
+        <label>Offset B (hrs) <input id="ob" type="number" min="0" value="1" style="width:90px" title="How far back B ends before A starts"></label>
+        <button class="btn" onclick="go()">Compare</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>KPIs</h3>
+        <div id="kpi" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px"></div>
+      </div>
+      <div class="card">
+        <h3>Overlay (Avg / p95 / Error%)</h3>
+        <div style="height:360px"><canvas id="chart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+async function loadDomains(){
+  const {data} = await axios.get('/api/domains');
+  const sel = document.getElementById('domain');
+  sel.innerHTML = '<option value="">(All domains)</option>' + data.map(d=>`<option>${d}</option>`).join('');
+}
+function card(label, a, b, fmt=''){
+  const d = (a - b), pct = b ? (d/b*100) : 0;
+  const arrow = d>=0 ? '▲' : '▼';
+  const cls = d>=0 ? 'bad' : 'ok';
+  const val = v => fmt==='%' ? (v?.toFixed(2)+'%') : (Math.round(v)+'ms');
+  return `<div class="pill"><strong>${label}</strong> A: ${val(a)} • B: ${val(b)} <span class="${cls}">${arrow} ${Math.abs(pct).toFixed(1)}%</span></div>`;
+}
+async function go(){
+  const d = document.getElementById('domain').value || '';
+  const s = document.getElementById('server').value || '';
+  const t = document.getElementById('rtype').value || '';
+  const ha = document.getElementById('ha').value;
+  const hb = document.getElementById('hb').value;
+  const ob = document.getElementById('ob').value;
+  const p = new URLSearchParams(); if(d) p.append('domain', d); if(s) p.append('dns_server', s); if(t) p.append('record_type', t);
+  p.append('hours_a', ha); p.append('hours_b', hb); p.append('offset_b', ob);
+  const {data} = await axios.get('/api/time_compare?'+p.toString());
+
+  const A = data.windowA, B = data.windowB;
+  const k = document.getElementById('kpi');
+  k.innerHTML = [
+    card('Avg', A.avg, B.avg),
+    card('p95', A.p95, B.p95),
+    card('p99', A.p99, B.p99),
+    card('Error %', A.error_rate, B.error_rate, '%')
+  ].join('');
+
+  const ctx = document.getElementById('chart').getContext('2d');
+  const la = A.timeseries.map(x=>new Date(x.ts).toLocaleString());
+  const lb = B.timeseries.map(x=>new Date(x.ts).toLocaleString());
+  if(window._tc) window._tc.destroy();
+  window._tc = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels: la.length >= lb.length ? la : lb,
+      datasets:[
+        {label:'A avg (ms)', data:A.timeseries.map(x=>x.avg), borderColor:'#667eea', backgroundColor:'rgba(102,126,234,.08)', yAxisID:'y', tension:.3},
+        {label:'A p95 (ms)', data:A.timeseries.map(x=>x.p95), borderColor:'#38a169', backgroundColor:'rgba(56,161,105,.08)', yAxisID:'y', tension:.3},
+        {label:'A err %', data:A.timeseries.map(x=>x.err), borderColor:'#f56565', backgroundColor:'rgba(245,101,101,.08)', yAxisID:'y1', tension:.3},
+        {label:'B avg (ms)', data:B.timeseries.map(x=>x.avg), borderDash:[6,4], borderColor:'#2b6cb0', backgroundColor:'rgba(43,108,176,.06)', yAxisID:'y', tension:.3},
+        {label:'B p95 (ms)', data:B.timeseries.map(x=>x.p95), borderDash:[6,4], borderColor:'#805ad5', backgroundColor:'rgba(128,90,213,.06)', yAxisID:'y', tension:.3},
+        {label:'B err %', data:B.timeseries.map(x=>x.err), borderDash:[6,4], borderColor:'#dd6b20', backgroundColor:'rgba(221,107,32,.06)', yAxisID:'y1', tension:.3},
+      ]
+    },
+    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+      scales:{y:{title:{display:true,text:'ms'}, beginAtZero:true}, y1:{position:'right', grid:{drawOnChartArea:false}, beginAtZero:true, title:{display:true,text:'%'}}}
+  }});
+}
+document.addEventListener('DOMContentLoaded', async()=>{ await loadDomains(); await go(); });
+</script>
+</body>
+</html>

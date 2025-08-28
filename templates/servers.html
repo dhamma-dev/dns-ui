@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DNS • Servers</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  {% include "_base_style.html" %}
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h2>🧭 Resolver Health & Rankings</h2>
+        <div class="nav" style="margin-top:6px">
+          <a href="/">Dashboard</a>
+          <a href="/servers"><strong>Servers</strong></a>
+          <a href="/consistency">Consistency</a>
+          <a href="/time-compare">Time Compare</a>
+        </div>
+      </div>
+      <div class="filters">
+        <select id="hours"><option>1</option><option>6</option><option selected>24</option><option>72</option><option>168</option></select>
+        <button class="btn" onclick="loadPage()">Apply</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3 style="margin-bottom:8px">Top Offenders (by p95)</h3>
+        <div style="overflow:auto;max-height:360px">
+          <table id="tbl">
+            <thead><tr><th>DNS Server</th><th>Samples</th><th>Error %</th><th>Avg</th><th>p95</th><th>p99</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:8px">p95 by Server</h3>
+        <div style="height:360px"><canvas id="chart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+async function loadPage(){
+  const h = document.getElementById('hours').value;
+  const {data} = await axios.get(`/api/servers_summary?hours=${h}`);
+  // table
+  const tb = document.querySelector('#tbl tbody'); tb.innerHTML = data.map(r=>{
+    const cls = r.error_rate>1 ? 'bad' : (r.error_rate>0 ? 'warn' : 'ok');
+    return `<tr>
+      <td>${r.dns_server}</td>
+      <td>${r.samples}</td>
+      <td class="${cls}">${r.error_rate.toFixed(2)}%</td>
+      <td>${Math.round(r.avg)}ms</td>
+      <td><strong>${Math.round(r.p95)}ms</strong></td>
+      <td>${Math.round(r.p99)}ms</td>
+    </tr>`;
+  }).join('');
+
+  // chart
+  const labels = data.map(x=>x.dns_server);
+  const vals = data.map(x=>Math.round(x.p95));
+  const ctx = document.getElementById('chart').getContext('2d');
+  if(window._ch) window._ch.destroy();
+  window._ch = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'p95 (ms)', data: vals }] },
+    options: { responsive:true, maintainAspectRatio:false, scales:{ y:{ beginAtZero:true, title:{display:true,text:'ms'} } } }
+  });
+}
+document.addEventListener('DOMContentLoaded', loadPage);
+</script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DNS • Consistency</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  {% include "_base_style.html" %}
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h2>🔗 Answer Consistency Across Resolvers</h2>
+        <div class="nav" style="margin-top:6px">
+          <a href="/">Dashboard</a>
+          <a href="/servers">Servers</a>
+          <a href="/consistency"><strong>Consistency</strong></a>
+          <a href="/time-compare">Time Compare</a>
+        </div>
+      </div>
+      <div class="filters">
+        <select id="domain"></select>
+        <select id="rtype"><option value="">Any Type</option><option>A</option><option>AAAA</option><option>CNAME</option></select>
+        <select id="hours"><option>1</option><option>6</option><option selected>24</option><option>72</option><option>168</option></select>
+        <button class="btn" onclick="loadConsistency()">Analyze</button>
+      </div>
+    </div>
+
+    <div class="card" id="summary">
+      <span class="pill">Overall consistency: <strong id="score">—</strong></span>
+      <span class="pill">Reference server: <strong id="ref">—</strong></span>
+      <span class="pill">IPs: <strong id="refips">—</strong></span>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3 style="margin-bottom:8px">Pairwise Jaccard Similarity</h3>
+        <div id="pairs"></div>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:8px">Mismatches vs Reference</h3>
+        <div id="mismatches"></div>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:8px">Per-Resolver Answer Sets</h3>
+        <div id="sets"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+async function loadDomains(){
+  const {data} = await axios.get('/api/domains');
+  const sel = document.getElementById('domain');
+  sel.innerHTML = data.map(d=>`<option>${d}</option>`).join('');
+}
+async function loadConsistency(){
+  const d = document.getElementById('domain').value;
+  const t = document.getElementById('rtype').value;
+  const h = document.getElementById('hours').value;
+  const q = new URLSearchParams({domain:d, hours:h}); if(t) q.append('record_type', t);
+  const {data} = await axios.get('/api/consistency?'+q.toString());
+
+  document.getElementById('score').textContent = (data.overall_consistency*100).toFixed(1)+'%';
+  document.getElementById('ref').textContent = data.reference_server || '—';
+  document.getElementById('refips').textContent = (data.reference_ips||[]).join(', ') || '—';
+
+  document.getElementById('pairs').innerHTML = `<table><thead><tr><th>Server A</th><th>Server B</th><th>Jaccard</th><th>Overlap/Union</th></tr></thead>
+    <tbody>${(data.pairs||[]).map(p=>`<tr><td>${p.a}</td><td>${p.b}</td><td>${(p.jaccard*100).toFixed(1)}%</td><td>${p.overlap}/${p.union}</td></tr>`).join('')}</tbody></table>`;
+
+  document.getElementById('mismatches').innerHTML = (data.mismatches||[]).map(m=>`
+    <div style="margin-bottom:8px">
+      <strong>${m.dns_server}</strong><br>
+      <span class="bad">Missing:</span> ${(m.missing||[]).join(', ') || '—'}<br>
+      <span class="warn">Extra:</span> ${(m.extra||[]).join(', ') || '—'}
+    </div>`).join('') || '<div class="pill">No mismatches 🎉</div>';
+
+  const sets = data.by_server_ips || {};
+  document.getElementById('sets').innerHTML = Object.keys(sets).map(s=>`
+    <div style="margin-bottom:8px"><strong>${s}</strong><br>${sets[s].join(', ') || '—'}</div>
+  `).join('');
+}
+document.addEventListener('DOMContentLoaded', async()=>{ await loadDomains(); await loadConsistency(); });
+</script>
+</body>
+</html>
