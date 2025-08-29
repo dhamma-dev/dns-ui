@@ -9,6 +9,8 @@
   <title>DNS Monitoring Dashboard • v2</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <style>
     :root{
       --bg1:#667eea; --bg2:#764ba2; --ink:#2d3748; --muted:#718096;
@@ -138,13 +140,7 @@
       </div>
       <div class="toolbar" style="margin-top:12px">
         <input id="global-search" type="search" placeholder="Search domain, server, response code…" aria-label="Search (press /)" style="flex:1;min-width:220px" />
-        <select id="time-range-filter" aria-label="Time Range">
-          <option value="1">Last Hour</option>
-          <option value="6">Last 6 Hours</option>
-          <option value="24" selected>Last 24 Hours</option>
-          <option value="72">Last 3 Days</option>
-          <option value="168">Last Week</option>
-        </select>
+        <input type="text" id="time-range-picker" placeholder="Select a time range" style="width: 280px;">
         <button class="btn" id="apply-btn" title="Apply (Enter)">Apply</button>
         <div class="spacer"></div>
         <button class="btn small ghost" id="save-view">Save View (s)</button>
@@ -331,6 +327,7 @@
     let sort = { field: 'timestamp', dir: 'desc' };
     let page = 1, pageSize = 100, totalRows = 0;
     let savedFilters = {};
+    let flatpickrInstance = null;
 
     // --- helpers ---
     const qs = (sel)=>document.querySelector(sel);
@@ -344,10 +341,13 @@
         dns: qs('#dns-server-filter').value || '',
         type: qs('#record-type-filter').value || '',
         code: qs('#response-code-filter').value || '',
-        hours: qs('#time-range-filter').value,
         sort: `${sort.field}:${sort.dir}`,
         page, pageSize
       });
+      if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+        p.append('start', flatpickrInstance.selectedDates[0].toISOString());
+        p.append('end', flatpickrInstance.selectedDates[1].toISOString());
+      }
       history.replaceState(null,'',`?${p.toString()}`);
     }
     function loadStateFromURL(){
@@ -358,7 +358,13 @@
       set('#dns-server-filter','dns');
       set('#record-type-filter','type');
       set('#response-code-filter','code');
-      set('#time-range-filter','hours');
+
+      const start = p.get('start');
+      const end = p.get('end');
+      if (start && end) {
+        flatpickrInstance.setDate([new Date(start), new Date(end)]);
+      }
+
       const s = p.get('sort'); if(s){ const [f,d]=s.split(':'); sort={field:f||'timestamp',dir:d||'desc'} }
       page = parseInt(p.get('page')||'1',10);
       pageSize = parseInt(p.get('pageSize')||'100',10); qs('#page-size').value = pageSize;
@@ -412,7 +418,6 @@
 
     async function submitConfig(config) {
         try {
-            // we don't await this, as the server will restart
             axios.post(`${API_BASE}/api/config`, config);
             localStorage.setItem('dnsMonitorConfig', JSON.stringify(config));
             qs('#config-modal').innerHTML = '<h2>Configuration saved. Server is restarting. Reloading page...</h2>';
@@ -420,13 +425,19 @@
                 location.reload();
             }, 2500);
         } catch (error) {
-            // This part might not be reached if the server restarts quickly
             console.error('Configuration failed:', error);
             alert('Failed to apply configuration. Please check the values and server logs.');
         }
     }
 
     async function initializeApp() {
+      flatpickrInstance = flatpickr("#time-range-picker", {
+        mode: "range",
+        enableTime: true,
+        dateFormat: "Y-m-d H:i",
+        defaultDate: [new Date(Date.now() - 24 * 3600 * 1000), new Date()]
+      });
+
       attachEvents();
       await loadFilterOptions(); // domains/servers
       loadStateFromURL();
@@ -554,8 +565,7 @@
         domain: qs('#domain-filter').value,
         dns_server: qs('#dns-server-filter').value,
         record_type: qs('#record-type-filter').value,
-        response_code: qs('#response-code-filter').value,
-        time_range: qs('#time-range-filter').value
+        response_code: qs('#response-code-filter').value
       };
     }
 
@@ -565,6 +575,10 @@
         const filters = paramsFromUI();
         const p = new URLSearchParams();
         Object.entries(filters).forEach(([k,v])=>{ if(v) p.append(k,v); });
+        if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+            p.append('start', flatpickrInstance.selectedDates[0].getTime());
+            p.append('end', flatpickrInstance.selectedDates[1].getTime());
+        }
         p.append('page', page);
         p.append('page_size', pageSize);
         p.append('sort', `${sort.field}:${sort.dir}`);
@@ -614,7 +628,36 @@
       qs('#alerts-container').innerHTML = alerts.map(a=>`<div class="alert alert-${a.type}">${a.message}</div>`).join('');
     }
 
-    function applyFilters(){ loadData(); }
+    function applyFilters(){
+      if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+        const start = flatpickrInstance.selectedDates[0].getTime() / 1000;
+        const end = flatpickrInstance.selectedDates[1].getTime() / 1000;
+
+        const applyBtn = qs('#apply-btn');
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Fetching...';
+
+        axios.post(`${API_BASE}/api/fetch_data`, { start, end })
+          .then(response => {
+            console.log(response.data.message);
+            // Simple approach: wait a bit for fetch to happen, then reload data.
+            // A more robust solution would involve polling or websockets.
+            setTimeout(() => {
+                loadData();
+                applyBtn.disabled = false;
+                applyBtn.textContent = 'Apply';
+            }, 5000); // 5 second delay
+          })
+          .catch(error => {
+            console.error("Error initiating data fetch:", error);
+            alert("Failed to start data fetch.");
+            applyBtn.disabled = false;
+            applyBtn.textContent = 'Apply';
+          });
+      } else {
+        loadData();
+      }
+    }
 
     // --- Domain drawer ---
     async function openDomainDrawer(domain){
@@ -629,8 +672,14 @@
         <a href="https://toolbox.googleapps.com/apps/dig/#A/${domain}" target="_blank">Dig</a>
       `;
       // Fetch summary
-      const hours = qs('#time-range-filter').value || 24;
-      const {data:s} = await axios.get(`${API_BASE}/api/domain_summary?domain=${esc(domain)}&hours=${hours}`);
+      const params = new URLSearchParams({ domain: domain });
+      if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+        params.append('start', flatpickrInstance.selectedDates[0].getTime());
+        params.append('end', flatpickrInstance.selectedDates[1].getTime());
+      } else {
+        params.append('hours', 24); // fallback
+      }
+      const {data:s} = await axios.get(`${API_BASE}/api/domain_summary?${params.toString()}`);
       // Grid
       const grid = qs('#drawer-grid');
       const pct = (n)=> (n!=null? n.toFixed(2)+'%':'—');
@@ -742,7 +791,7 @@
       const domain = qs('#trend-domain').value;
       if(!domain){ alert('Pick a domain'); return; }
       const hours = qs('#trend-window').value;
-      const {data} = await axios.get(`${API_BASE}/api/domain_summary?domain=${esc(domain)}&hours=${hours}`);
+      const {data:s} = await axios.get(`${API_BASE}/api/domain_summary?domain=${esc(domain)}&hours=${hours}`);
       const labels = data.timeseries.map(t=>new Date(t.ts).toLocaleString());
       const avg = data.timeseries.map(t=>t.avg);
       const p95 = data.timeseries.map(t=>t.p95);
@@ -796,7 +845,9 @@
       qs('#dns-server-filter').value = f.dns_server||'';
       qs('#record-type-filter').value = f.record_type||'';
       qs('#response-code-filter').value = f.response_code||'';
-      qs('#time-range-filter').value = f.time_range||'24';
+      if (f.start && f.end) {
+        flatpickrInstance.setDate([new Date(f.start), new Date(f.end)]);
+      }
       sort = data.sort||sort;
       pageSize = data.pageSize||pageSize; qs('#page-size').value = pageSize;
       await loadData();
@@ -807,6 +858,10 @@
       const f = paramsFromUI();
       const p = new URLSearchParams();
       Object.entries(f).forEach(([k,v])=>{ if(v) p.append(k,v); });
+      if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+        p.append('start', flatpickrInstance.selectedDates[0].getTime());
+        p.append('end', flatpickrInstance.selectedDates[1].getTime());
+      }
       p.append('sort', `${sort.field}:${sort.dir}`);
       p.append('limit', Math.max(1000, pageSize)); // safe default
       const link = document.createElement('a');

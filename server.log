@@ -1,0 +1,16 @@
+2025-08-29 18:16:27,102 - dns_monitor - INFO - Waiting for configuration via web UI...
+2025-08-29 18:16:57,920 - dns_monitor - INFO - Waiting for configuration via web UI...
+2025-08-29 18:17:00,920 - dns_monitor - INFO - Writing config to instance/config.json: {'api_base_url': 'https://jsonplaceholder.typicode.com/posts', 'org_id': '123', 'api_token': 'dummy-token'}
+2025-08-29 18:17:00,921 - dns_monitor - INFO - Config file written successfully.
+2025-08-29 18:17:37,144 - dns_monitor - INFO - Configuration loaded from file.
+2025-08-29 18:17:43,049 - dns_monitor - INFO - Request for 1672531200-1672617600. Fetching missing intervals: [(1672531200, 1672617600)]
+2025-08-29 18:17:43,049 - dns_monitor - INFO - Fetching for sub-interval: 1672531200-1672617600
+2025-08-29 18:17:43,050 - dns_monitor - INFO - Starting _fetch_single_range for 1672531200-1672617600
+2025-08-29 18:17:43,250 - dns_monitor - INFO - API response status: 200
+2025-08-29 18:17:44,251 - dns_monitor - INFO - Finished _fetch_single_range for 1672531200-1672617600
+2025-08-29 18:17:44,256 - dns_monitor - INFO - Successfully fetched and cached interval 1672531200-1672617600.
+2025-08-29 18:17:44,256 - dns_monitor - INFO - Successfully fetched all missing data for range 1672531200-1672617600.
+2025-08-29 18:18:28,275 - dns_monitor - INFO - Configuration loaded from file.
+2025-08-29 18:18:39,123 - dns_monitor - INFO - Time range 1672531200-1672617600 is already fully cached.
+2025-08-29 18:19:13,577 - dns_monitor - INFO - Configuration loaded from file.
+2025-08-29 18:19:14,981 - dns_monitor - INFO - Configuration loaded from file.
