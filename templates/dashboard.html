@@ -93,6 +93,30 @@
   </style>
 </head>
 <body>
+  <div id="config-modal" style="display:none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center;">
+    <div style="background: #fff; padding: 30px; border-radius: 12px; width: 500px; max-width: 90%;">
+      <h2>Setup Configuration</h2>
+      <p style="margin: 8px 0 16px; color: #666;">Please provide your API credentials to begin.</p>
+      <form id="config-form">
+        <div class="filter-group wide" style="grid-column: span 12; margin-bottom: 12px;">
+          <label for="api-domain">Server Domain</label>
+          <input id="api-domain" type="text" placeholder="e.g., demo.pm.appneta.com" required>
+        </div>
+        <div class="filter-group wide" style="grid-column: span 12; margin-bottom: 12px;">
+          <label for="org-id">Organization ID</label>
+          <input id="org-id" type="text" placeholder="e.g., 3" required>
+        </div>
+        <div class="filter-group wide" style="grid-column: span 12; margin-bottom: 12px;">
+          <label for="api-token">API Token</label>
+          <input id="api-token" type="text" placeholder="Token <YOUR_TOKEN>" required>
+        </div>
+        <div style="text-align: right; margin-top: 20px;">
+            <button type="submit" class="btn">Save and Continue</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="container">
     <div class="header" role="banner">
       <div class="header-top">
@@ -342,6 +366,67 @@
 
     // --- init ---
     document.addEventListener('DOMContentLoaded', async () => {
+      qs('#config-form').addEventListener('submit', handleConfigSubmit);
+
+      const savedConfig = JSON.parse(localStorage.getItem('dnsMonitorConfig'));
+      if (savedConfig && savedConfig.api_base_url) {
+        try {
+            const url = new URL(savedConfig.api_base_url);
+            qs('#api-domain').value = url.hostname;
+        } catch(e) { /* ignore parse error */ }
+        qs('#org-id').value = savedConfig.org_id;
+        qs('#api-token').value = savedConfig.api_token;
+      }
+
+      try {
+        const { data } = await axios.get(`${API_BASE}/api/status`);
+        if (data.configured) {
+          initializeApp();
+        } else {
+          if (savedConfig) {
+            await submitConfig(savedConfig);
+          } else {
+            qs('#config-modal').style.display = 'flex';
+          }
+        }
+      } catch (e) {
+        console.error("Error checking server status", e);
+        alert("Could not connect to the backend server.");
+      }
+    });
+
+    async function handleConfigSubmit(e) {
+        e.preventDefault();
+        const domain = qs('#api-domain').value.trim();
+        if (!domain) {
+            alert("Please enter a server domain.");
+            return;
+        }
+        const config = {
+            api_base_url: `https://${domain}/api/v3/dns/webPath/data`,
+            org_id: qs('#org-id').value.trim(),
+            api_token: qs('#api-token').value.trim(),
+        };
+        await submitConfig(config);
+    }
+
+    async function submitConfig(config) {
+        try {
+            // we don't await this, as the server will restart
+            axios.post(`${API_BASE}/api/config`, config);
+            localStorage.setItem('dnsMonitorConfig', JSON.stringify(config));
+            qs('#config-modal').innerHTML = '<h2>Configuration saved. Server is restarting. Reloading page...</h2>';
+            setTimeout(() => {
+                location.reload();
+            }, 2500);
+        } catch (error) {
+            // This part might not be reached if the server restarts quickly
+            console.error('Configuration failed:', error);
+            alert('Failed to apply configuration. Please check the values and server logs.');
+        }
+    }
+
+    async function initializeApp() {
       attachEvents();
       await loadFilterOptions(); // domains/servers
       loadStateFromURL();
@@ -360,7 +445,7 @@
         if(e.key.toLowerCase() === 'e') { e.preventDefault(); exportCSV(); }
         if(e.key === 'Enter' && document.activeElement.closest('input,select')) { applyFilters(); }
       });
-    });
+    }
 
     function attachEvents(){
       // Tabs

@@ -34,17 +34,36 @@ from itertools import combinations
 
 # --- Config ---
 APP_PORT       = int(os.getenv("APP_PORT", "8181"))
-API_BASE_URL   = os.getenv("API_BASE_URL", "https://demo.pm.appneta.com/api/v3/dns/webPath/data")
-API_TOKEN      = os.getenv("API_TOKEN", "Token redacted")
-ORG_ID         = int(os.getenv("ORG_ID", "3"))
 FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL", "300"))  # seconds
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "30"))
 SLO_OBJECTIVE  = float(os.getenv("SLO_OBJECTIVE", "99.9"))  # %
 
-DB_PATH = "dns_monitoring.db"
+os.makedirs('instance', exist_ok=True)
+DB_PATH = "instance/dns_monitoring.db"
+CONFIG_PATH = "instance/config.json"
+
+API_BASE_URL, API_TOKEN, ORG_ID = None, None, None
+
+def load_config():
+    global API_BASE_URL, API_TOKEN, ORG_ID
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                config = json.load(f)
+            API_BASE_URL = config.get('api_base_url')
+            API_TOKEN = config.get('api_token')
+            ORG_ID = config.get('org_id')
+            return True
+        except (IOError, json.JSONDecodeError):
+            return False
+    return False
 
 app = Flask(__name__, static_folder=None, template_folder="templates")
 CORS(app)
+
+# --- App State ---
+config_lock = threading.Lock()
+background_thread = None
 
 # --- DB utilities ---
 def connect_db():
@@ -671,10 +690,30 @@ collector = DNSDataCollector()
 def background_fetch():
     base = max(30, FETCH_INTERVAL)
     while True:
-        ok = collector.fetch_and_store_data(ORG_ID, limit=100)
-        time.sleep(base if ok else min(base*2, 900))
+        if API_TOKEN and ORG_ID and API_BASE_URL:
+            ok = collector.fetch_and_store_data(ORG_ID, limit=100)
+            time.sleep(base if ok else min(base*2, 900))
+        else:
+            time.sleep(15) # wait for config
 
 # --- Routes ---
+@app.route('/api/status')
+def api_status():
+    return jsonify({'configured': all([API_TOKEN, ORG_ID, API_BASE_URL])})
+
+@app.route('/api/config', methods=['POST'])
+def api_config():
+    data = request.get_json()
+    if not data or not all(k in data for k in ['api_base_url', 'api_token', 'org_id']):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(data, f)
+
+    # The app will be reloaded by the dev server, picking up the new config.
+    # For production servers, a restart would be needed.
+    return jsonify({'ok': True})
+
 @app.route('/')
 def index():
     return render_template('dashboard.html')
@@ -900,14 +939,22 @@ def stream():
 # --- Bootstrap ---
 if __name__ == '__main__':
     os.makedirs('templates', exist_ok=True)
-    # Make sure the template exists under templates/dashboard.html
     if not os.path.exists(os.path.join('templates','dashboard.html')):
         with open(os.path.join('templates','dashboard.html'), 'w', encoding='utf-8') as f:
             f.write('<h2>Place dashboard.html here</h2>')
-    # background fetcher
-    threading.Thread(target=background_fetch, daemon=True).start()
 
-    print("Performing initial data fetch…")
-    collector.fetch_and_store_data(ORG_ID, limit=100)
+    if load_config():
+        print("Configuration loaded from file.")
+        # Perform initial fetch
+        ok = collector.fetch_and_store_data(ORG_ID, limit=100)
+        if not ok:
+             print("[startup] Initial data fetch failed")
+        # Start background thread
+        background_thread = threading.Thread(target=background_fetch, daemon=True)
+        background_thread.start()
+        print("Background fetch thread started.")
+    else:
+        print("Waiting for configuration via web UI...")
+
     print(f"Starting DNS Dashboard v2 on http://0.0.0.0:{APP_PORT}")
-    app.run(debug=True, host='0.0.0.0', port=APP_PORT)
+    app.run(debug=True, host='0.0.0.0', port=APP_PORT, use_reloader=True)
