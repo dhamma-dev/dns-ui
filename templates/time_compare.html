@@ -8,37 +8,30 @@
   {% include "_base_style.html" %}
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <div>
-        <h2>⏱️ Time-Window Comparison</h2>
-        <div class="nav" style="margin-top:6px">
-          <a href="/">Dashboard</a>
-          <a href="/servers">Servers</a>
-          <a href="/consistency">Consistency</a>
-          <a href="/time-compare"><strong>Time Compare</strong></a>
-        </div>
-      </div>
-      <div class="filters">
-        <select id="domain"></select>
-        <input id="server" placeholder="DNS server (optional)">
-        <select id="rtype"><option value="">Any Type</option><option>A</option><option>AAAA</option><option>CNAME</option></select>
-        <label>Window A (hrs) <input id="ha" type="number" min="1" value="1" style="width:80px"></label>
-        <label>Window B (hrs) <input id="hb" type="number" min="1" value="1" style="width:80px"></label>
-        <label>Offset B (hrs) <input id="ob" type="number" min="0" value="1" style="width:90px" title="How far back B ends before A starts"></label>
-        <button class="btn" onclick="go()">Compare</button>
-      </div>
+  <div class="header-bar">
+    <div class="header-bar-content">
+        <h1><a href="/" style="text-decoration: none; color: inherit;">DNS Monitoring Dashboard</a> / Time Compare</h1>
+        <div class="spacer"></div>
     </div>
+  </div>
+  <div class="filter-bar">
+    <select id="domain"></select>
+    <input id="server" placeholder="DNS server (optional)">
+    <select id="rtype"><option value="">Any Type</option><option>A</option><option>AAAA</option><option>CNAME</option></select>
+    <label>Window A (hrs) <input id="ha" type="number" min="1" value="1" style="width:60px"></label>
+    <label>Window B (hrs) <input id="hb" type="number" min="1" value="1" style="width:60px"></label>
+    <label>Offset B (hrs) <input id="ob" type="number" min="0" value="1" style="width:70px" title="How far back B ends before A starts"></label>
+    <button class="btn primary" onclick="go()">Compare</button>
+  </div>
 
-    <div class="grid">
-      <div class="card">
-        <h3>KPIs</h3>
-        <div id="kpi" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px"></div>
-      </div>
-      <div class="card">
-        <h3>Overlay (Avg / p95 / Error%)</h3>
-        <div style="height:360px"><canvas id="chart"></canvas></div>
-      </div>
+  <div class="container" style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
+    <div class="card">
+      <h3 class="card-title" style="margin-top:0;">KPI Comparison</h3>
+      <div id="kpi" style="display:flex; flex-direction: column; gap:10px; margin-top:6px"></div>
+    </div>
+    <div class="card">
+      <h3 class="card-title" style="margin-top:0;">Overlay (Avg / p95 / Error%)</h3>
+      <div class="chart-container" style="height:400px"><canvas id="chart"></canvas></div>
     </div>
   </div>
 
@@ -48,13 +41,23 @@ async function loadDomains(){
   const sel = document.getElementById('domain');
   sel.innerHTML = '<option value="">(All domains)</option>' + data.map(d=>`<option>${d}</option>`).join('');
 }
+
 function card(label, a, b, fmt=''){
-  const d = (a - b), pct = b ? (d/b*100) : 0;
-  const arrow = d>=0 ? '▲' : '▼';
-  const cls = d>=0 ? 'bad' : 'ok';
+  const d = (a - b);
+  const pct = b ? (d/b*100) : (a > 0 ? 100 : 0);
+  const arrow = d >= 0 ? '▲' : '▼';
+  const cls = d >= 0 ? 'response-slow' : 'response-fast';
   const val = v => fmt==='%' ? (v?.toFixed(2)+'%') : (Math.round(v)+'ms');
-  return `<div class="pill"><strong>${label}</strong> A: ${val(a)} • B: ${val(b)} <span class="${cls}">${arrow} ${Math.abs(pct).toFixed(1)}%</span></div>`;
+  return `<div class="comparison-item">
+            <div style="font-weight: 600;">${label}</div>
+            <div style="display:flex; justify-content: space-between; margin-top: 4px;">
+              <span>A: ${val(a)}</span>
+              <span>B: ${val(b)}</span>
+              <span class="${cls}" style="min-width: 60px; text-align:right;">${arrow} ${Math.abs(pct).toFixed(1)}%</span>
+            </div>
+          </div>`;
 }
+
 async function go(){
   const d = document.getElementById('domain').value || '';
   const s = document.getElementById('server').value || '';
@@ -84,17 +87,20 @@ async function go(){
     data:{
       labels: la.length >= lb.length ? la : lb,
       datasets:[
-        {label:'A avg (ms)', data:A.timeseries.map(x=>x.avg), borderColor:'#667eea', backgroundColor:'rgba(102,126,234,.08)', yAxisID:'y', tension:.3},
-        {label:'A p95 (ms)', data:A.timeseries.map(x=>x.p95), borderColor:'#38a169', backgroundColor:'rgba(56,161,105,.08)', yAxisID:'y', tension:.3},
-        {label:'A err %', data:A.timeseries.map(x=>x.err), borderColor:'#f56565', backgroundColor:'rgba(245,101,101,.08)', yAxisID:'y1', tension:.3},
-        {label:'B avg (ms)', data:B.timeseries.map(x=>x.avg), borderDash:[6,4], borderColor:'#2b6cb0', backgroundColor:'rgba(43,108,176,.06)', yAxisID:'y', tension:.3},
-        {label:'B p95 (ms)', data:B.timeseries.map(x=>x.p95), borderDash:[6,4], borderColor:'#805ad5', backgroundColor:'rgba(128,90,213,.06)', yAxisID:'y', tension:.3},
-        {label:'B err %', data:B.timeseries.map(x=>x.err), borderDash:[6,4], borderColor:'#dd6b20', backgroundColor:'rgba(221,107,32,.06)', yAxisID:'y1', tension:.3},
+        {label:'A avg (ms)', data:A.timeseries.map(x=>x.avg), borderColor:'var(--primary)', backgroundColor:'rgba(3,102,214,.08)', yAxisID:'y', tension:.3},
+        {label:'A p95 (ms)', data:A.timeseries.map(x=>x.p95), borderColor:'var(--success)', backgroundColor:'rgba(40,167,69,.08)', yAxisID:'y', tension:.3},
+        {label:'A err %', data:A.timeseries.map(x=>x.err), borderColor:'var(--danger)', backgroundColor:'rgba(220,53,69,.08)', yAxisID:'y1', tension:.3},
+        {label:'B avg (ms)', data:B.timeseries.map(x=>x.avg), borderDash:[6,4], borderColor:'var(--info)', backgroundColor:'rgba(23,162,184,.06)', yAxisID:'y', tension:.3},
+        {label:'B p95 (ms)', data:B.timeseries.map(x=>x.p95), borderDash:[6,4], borderColor:'var(--warning)', backgroundColor:'rgba(253,184,53,.06)', yAxisID:'y', tension:.3},
       ]
     },
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-      scales:{y:{title:{display:true,text:'ms'}, beginAtZero:true}, y1:{position:'right', grid:{drawOnChartArea:false}, beginAtZero:true, title:{display:true,text:'%'}}}
-  }});
+      scales:{
+        y:{title:{display:true,text:'ms'}, beginAtZero:true, grid: { color: 'var(--gray-200)'}},
+        y1:{position:'right', grid:{drawOnChartArea:false}, beginAtZero:true, title:{display:true,text:'%'}}
+      }
+    }
+  });
 }
 document.addEventListener('DOMContentLoaded', async()=>{ await loadDomains(); await go(); });
 </script>
