@@ -8,40 +8,35 @@
   {% include "_base_style.html" %}
   <style>
     .drawer{position:fixed;top:0;right:-560px;width:560px;max-width:100%;height:100vh;background:#fff;
-      box-shadow:-12px 0 40px rgba(0,0,0,.16);transition:right .28s ease;padding:16px 16px 22px;z-index:1000;overflow:auto}
+      border-left: 1px solid var(--gray-200);transition:right .28s ease;padding:16px 16px 22px;z-index:1000;overflow:auto}
     .drawer.open{right:0}
     .drawer header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-    .chip{background:#f7fafc;border:1px solid #e2e8f0;border-radius:999px;padding:6px 10px;margin-right:6px;display:inline-block}
-    .heat{border-collapse:collapse}
-    .heat th,.heat td{border:1px solid #e2e8f0;padding:4px 6px;font-size:.82rem;text-align:center}
-    .legend{display:flex;gap:8px;align-items:center;margin:6px 0}
-    .swatch{width:18px;height:12px;display:inline-block;border:1px solid #e2e8f0}
+    .chip{background:var(--gray-100);border:1px solid var(--gray-200);border-radius:3px;padding:6px 10px;margin-right:6px;display:inline-block; font-size: 12px;}
+    .heat{border-collapse:collapse; width: 100%;}
+    .heat th,.heat td{border:1px solid var(--gray-200);padding:4px 6px;font-size:11px;text-align:center}
+    .legend{display:flex;gap:8px;align-items:center;margin:6px 0; font-size: 11px;}
+    .swatch{width:18px;height:12px;display:inline-block;border:1px solid var(--gray-200)}
   </style>
 </head>
 <body>
-<div class="container">
-  <div class="header">
-    <div>
-      <h2>📍 Monitoring Points</h2>
-      <div class="nav" style="margin-top:6px">
-        <a href="/">Dashboard</a>
-        <a href="/servers">Servers</a>
-        <a href="/consistency">Consistency</a>
-        <a href="/time-compare">Time Compare</a>
-        <a href="/points"><strong>Points</strong></a>
-      </div>
+<div class="header-bar">
+    <div class="header-bar-content">
+        <h1><a href="/" style="text-decoration: none; color: inherit;">DNS Monitoring Dashboard</a> / Monitoring Points</h1>
+        <div class="spacer"></div>
     </div>
-    <div class="filters">
-      <input id="q" placeholder="Search GUID / interface…">
-      <select id="hours"><option>1</option><option>6</option><option selected>24</option><option>72</option><option>168</option></select>
-      <button class="btn" onclick="loadPoints()">Apply</button>
-    </div>
-  </div>
+</div>
+<div class="filter-bar">
+    <input id="q" placeholder="Search GUID / interface…">
+    <label for="hours" style="font-size: 12px; color: var(--gray-700);">Time Window (hours):</label>
+    <select id="hours"><option>1</option><option>6</option><option selected>24</option><option>72</option><option>168</option></select>
+    <button class="btn primary" onclick="loadPoints()">Apply</button>
+</div>
 
+<div class="container">
   <div class="card">
     <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
-      <h3>Health by Monitoring Point</h3>
-      <span class="pill" id="count">—</span>
+      <h3 class="card-title" style="margin-top:0;">Health by Monitoring Point</h3>
+      <span id="count" style="font-size: 12px; color: var(--gray-700);">—</span>
     </div>
     <div style="overflow:auto;max-height:520px;margin-top:8px">
       <table id="tbl">
@@ -67,24 +62,23 @@
   <div class="chip" id="dw-kpi-err">Error %: —</div>
   <div class="chip" id="dw-kpi-p95">p95: —</div>
 
-  <h4 style="margin-top:10px">Trend</h4>
-  <div style="height:220px"><canvas id="dw-trend"></canvas></div>
+  <h4 class="card-title">Trend</h4>
+  <div class="chart-container" style="height:220px"><canvas id="dw-trend"></canvas></div>
 
-  <h4 style="margin-top:10px">Top Domains</h4>
-  <div id="dw-domains" style="font-size:.9rem"></div>
+  <h4 class="card-title">Top Domains</h4>
+  <div id="dw-domains" style="font-size:12px"></div>
 
-  <h4 style="margin-top:10px">Top DNS Servers</h4>
-  <div id="dw-servers" style="font-size:.9rem"></div>
+  <h4 class="card-title">Top DNS Servers</h4>
+  <div id="dw-servers" style="font-size:12px"></div>
 
-  <h4 style="margin-top:10px">Record Types</h4>
-  <div id="dw-types" style="font-size:.9rem"></div>
+  <h4 class="card-title">Record Types</h4>
+  <div id="dw-types"></div>
 
-  <h4 style="margin-top:10px">Hour × Domain Heatmap (p95)</h4>
+  <h4 class="card-title">Hour × Domain Heatmap (p95)</h4>
   <div class="legend">
-    <span>Low</span><span class="swatch" style="background:#e6f4ea"></span>
-    <span class="swatch" style="background:#cce9d5"></span>
-    <span class="swatch" style="background:#ffd7b3"></span>
-    <span class="swatch" style="background:#ffb3b3"></span><span>High</span>
+    <span>Low</span><span class="swatch" style="background:#c6f6d5"></span>
+    <span class="swatch" style="background:#ffd7aa"></span>
+    <span class="swatch" style="background:#fed7d7"></span><span>High</span>
   </div>
   <div style="overflow:auto">
     <table class="heat" id="dw-heat"></table>
@@ -108,12 +102,11 @@ async function loadPoints(){
 
   const tb = document.querySelector('#tbl tbody');
   tb.innerHTML = rows.map(r=>{
-    const cls = r.error_rate>1 ? 'bad' : (r.error_rate>0 ? 'warn' : 'ok');
     const pid = `${r.appliance_guid}::${r.interface}`;
     return `<tr>
       <td><a href="javascript:void(0)" onclick="loadPointDetail('${r.appliance_guid}','${r.interface||''}')">${pid}</a></td>
       <td>${r.samples}</td>
-      <td class="${cls}">${pct(r.error_rate)}</td>
+      <td><span class="response-time ${r.error_rate > 1 ? 'response-slow' : (r.error_rate > 0 ? 'response-medium' : 'response-fast')}">${pct(r.error_rate)}</span></td>
       <td>${fmtms(r.avg)}</td>
       <td><strong>${fmtms(r.p95)}</strong></td>
       <td>${fmtms(r.p99)}</td>
@@ -122,11 +115,9 @@ async function loadPoints(){
 }
 
 function colorFor(ms){
-  // simple 4-stop ramp
-  if(ms<=50) return '#e6f4ea';
-  if(ms<=100) return '#cce9d5';
-  if(ms<=200) return '#ffd7b3';
-  return '#ffb3b3';
+  if(ms<=50) return 'var(--success)';
+  if(ms<=100) return 'var(--warning)';
+  return 'var(--danger)';
 }
 
 async function loadPointDetail(ag, iface){
@@ -149,30 +140,30 @@ async function loadPointDetail(ag, iface){
   _trend = new Chart(ctx, {
     type:'line',
     data:{labels, datasets:[
-      {label:'Avg (ms)', data:data.timeseries.map(x=>x.avg)},
-      {label:'p95 (ms)', data:data.timeseries.map(x=>x.p95)},
-      {label:'Err %', data:data.timeseries.map(x=>x.err), yAxisID:'y1'}
+      {label:'Avg (ms)', data:data.timeseries.map(x=>x.avg), borderColor: 'var(--primary)'},
+      {label:'p95 (ms)', data:data.timeseries.map(x=>x.p95), borderColor: 'var(--success)'},
+      {label:'Err %', data:data.timeseries.map(x=>x.err), yAxisID:'y1', borderColor: 'var(--danger)'}
     ]},
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-      scales:{y:{title:{display:true,text:'ms'}, beginAtZero:true}, y1:{position:'right', grid:{drawOnChartArea:false}, beginAtZero:true, title:{display:true,text:'%'}}}
-  }});
+      scales:{
+          y:{title:{display:true,text:'ms'}, beginAtZero:true, grid: { color: 'var(--gray-200)'} },
+          y1:{position:'right', grid:{drawOnChartArea:false}, beginAtZero:true, title:{display:true,text:'%'}}
+      }
+    }
+  });
 
-  // Top domains
   document.getElementById('dw-domains').innerHTML = (data.top_domains||[]).map(x =>
-    `<div>${x.domain} — count ${x.count}, p95 ${fmtms(x.p95)}, <span class="${x.error_rate>0?'bad':'ok'}">${pct(x.error_rate)}</span></div>`
-  ).join('') || '<div class="pill">No data</div>';
+    `<div>${x.domain} — count ${x.count}, p95 ${fmtms(x.p95)}, <span class="response-time ${x.error_rate>0?'response-slow':'response-fast'}">${pct(x.error_rate)}</span></div>`
+  ).join('') || '<div class="chip">No data</div>';
 
-  // Top servers
   document.getElementById('dw-servers').innerHTML = (data.servers||[]).map(x =>
-    `<div>${x.dns_server} — count ${x.count}, p95 ${fmtms(x.p95)}, <span class="${x.error_rate>0?'bad':'ok'}">${pct(x.error_rate)}</span></div>`
-  ).join('') || '<div class="pill">No data</div>';
+    `<div>${x.dns_server} — count ${x.count}, p95 ${fmtms(x.p95)}, <span class="response-time ${x.error_rate>0?'response-slow':'response-fast'}">${pct(x.error_rate)}</span></div>`
+  ).join('') || '<div class="chip">No data</div>';
 
-  // Types
   document.getElementById('dw-types').innerHTML = (data.record_types||[]).map(x =>
     `<span class="chip">${x.type||'(none)'} • ${x.count} • ${pct(x.error_rate)}</span>`
-  ).join('') || '<div class="pill">No data</div>';
+  ).join('') || '<div class="chip">No data</div>';
 
-  // Heatmap
   const hm = data.heatmap || {domains:[], rows:[]};
   const table = document.getElementById('dw-heat');
   table.innerHTML = '';
@@ -182,7 +173,7 @@ async function loadPointDetail(ag, iface){
   hm.rows.forEach(r=>{
     const tr = document.createElement('tr');
     const hour = new Date(r.ts).toLocaleString();
-    tr.innerHTML = `<td>${hour}</td>` + r.cells.map(v => `<td style="background:${colorFor(v)}">${v?Math.round(v):''}</td>`).join('');
+    tr.innerHTML = `<td>${hour}</td>` + r.cells.map(v => `<td style="background:${colorFor(v)}; color: #fff;">${v?Math.round(v):''}</td>`).join('');
     tbody.appendChild(tr);
   });
   table.appendChild(thead); table.appendChild(tbody);

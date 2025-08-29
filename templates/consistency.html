@@ -7,42 +7,37 @@
   {% include "_base_style.html" %}
 </head>
 <body>
+  <div class="header-bar">
+    <div class="header-bar-content">
+        <h1><a href="/" style="text-decoration: none; color: inherit;">DNS Monitoring Dashboard</a> / Consistency</h1>
+        <div class="spacer"></div>
+    </div>
+  </div>
+  <div class="filter-bar">
+    <select id="domain"></select>
+    <select id="rtype"><option value="">Any Type</option><option>A</option><option>AAAA</option><option>CNAME</option></select>
+    <select id="hours"><option>1</option><option>6</option><option selected>24</option><option>72</option><option>168</option></select>
+    <button class="btn primary" onclick="loadConsistency()">Analyze</button>
+  </div>
+
   <div class="container">
-    <div class="header">
-      <div>
-        <h2>🔗 Answer Consistency Across Resolvers</h2>
-        <div class="nav" style="margin-top:6px">
-          <a href="/">Dashboard</a>
-          <a href="/servers">Servers</a>
-          <a href="/consistency"><strong>Consistency</strong></a>
-          <a href="/time-compare">Time Compare</a>
-        </div>
-      </div>
-      <div class="filters">
-        <select id="domain"></select>
-        <select id="rtype"><option value="">Any Type</option><option>A</option><option>AAAA</option><option>CNAME</option></select>
-        <select id="hours"><option>1</option><option>6</option><option selected>24</option><option>72</option><option>168</option></select>
-        <button class="btn" onclick="loadConsistency()">Analyze</button>
-      </div>
+    <div class="card" id="summary" style="display:flex; gap: 24px;">
+      <div><span class="stat-label">Overall consistency</span><br><strong id="score" class="stat-value">—</strong></div>
+      <div><span class="stat-label">Reference server</span><br><strong id="ref" style="font-size: 1.2em;">—</strong></div>
+      <div><span class="stat-label">Reference IPs</span><br><strong id="refips" style="font-size: 1em; color: var(--gray-700);">—</strong></div>
     </div>
 
-    <div class="card" id="summary">
-      <span class="pill">Overall consistency: <strong id="score">—</strong></span>
-      <span class="pill">Reference server: <strong id="ref">—</strong></span>
-      <span class="pill">IPs: <strong id="refips">—</strong></span>
-    </div>
-
-    <div class="grid">
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
       <div class="card">
-        <h3 style="margin-bottom:8px">Pairwise Jaccard Similarity</h3>
+        <h3 class="card-title" style="margin-top:0;">Pairwise Jaccard Similarity</h3>
         <div id="pairs"></div>
       </div>
       <div class="card">
-        <h3 style="margin-bottom:8px">Mismatches vs Reference</h3>
+        <h3 class="card-title" style="margin-top:0;">Mismatches vs Reference</h3>
         <div id="mismatches"></div>
       </div>
       <div class="card">
-        <h3 style="margin-bottom:8px">Per-Resolver Answer Sets</h3>
+        <h3 class="card-title" style="margin-top:0;">Per-Resolver Answer Sets</h3>
         <div id="sets"></div>
       </div>
     </div>
@@ -69,15 +64,15 @@ async function loadConsistency(){
     <tbody>${(data.pairs||[]).map(p=>`<tr><td>${p.a}</td><td>${p.b}</td><td>${(p.jaccard*100).toFixed(1)}%</td><td>${p.overlap}/${p.union}</td></tr>`).join('')}</tbody></table>`;
 
   document.getElementById('mismatches').innerHTML = (data.mismatches||[]).map(m=>`
-    <div style="margin-bottom:8px">
+    <div style="margin-bottom:8px; border-bottom: 1px solid var(--gray-200); padding-bottom: 8px;">
       <strong>${m.dns_server}</strong><br>
-      <span class="bad">Missing:</span> ${(m.missing||[]).join(', ') || '—'}<br>
-      <span class="warn">Extra:</span> ${(m.extra||[]).join(', ') || '—'}
+      <span style="color: var(--danger)">Missing:</span> ${(m.missing||[]).join(', ') || '—'}<br>
+      <span style="color: var(--warning)">Extra:</span> ${(m.extra||[]).join(', ') || '—'}
     </div>`).join('') || '<div class="pill">No mismatches 🎉</div>';
 
   const sets = data.by_server_ips || {};
   document.getElementById('sets').innerHTML = Object.keys(sets).map(s=>`
-    <div style="margin-bottom:8px"><strong>${s}</strong><br>${sets[s].join(', ') || '—'}</div>
+    <div style="margin-bottom:8px; font-family: monospace; font-size: 12px;"><strong>${s}</strong><br>${sets[s].join(', ') || '—'}</div>
   `).join('');
 }
 document.addEventListener('DOMContentLoaded', async()=>{ await loadDomains(); await loadConsistency(); });
