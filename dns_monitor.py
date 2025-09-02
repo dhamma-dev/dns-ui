@@ -47,12 +47,23 @@ def load_config():
         try:
             with open(CONFIG_PATH, 'r') as f:
                 config = json.load(f)
-            API_BASE_URL = config.get('api_base_url')
-            API_TOKEN = config.get('api_token')
-            ORG_ID = config.get('org_id')
-            return True
+
+            api_token = config.get('api_token')
+            org_id = config.get('org_id')
+            api_base_url = config.get('api_base_url')
+
+            # All values must exist and the token must not be the placeholder
+            if all([api_base_url, api_token, org_id]) and api_token != 'dummy-token':
+                API_BASE_URL = api_base_url
+                API_TOKEN = api_token
+                ORG_ID = org_id
+                return True
+
         except (IOError, json.JSONDecodeError):
-            return False
+            pass  # Fall through to return False
+
+    # If file doesn't exist, is invalid JSON, or fails checks
+    API_BASE_URL, API_TOKEN, ORG_ID = None, None, None
     return False
 
 app = Flask(__name__, static_folder=None, template_folder="templates")
