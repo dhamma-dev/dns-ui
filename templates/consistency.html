@@ -68,7 +68,7 @@ async function loadConsistency(){
       <strong>${m.dns_server}</strong><br>
       <span style="color: var(--danger)">Missing:</span> ${(m.missing||[]).join(', ') || '—'}<br>
       <span style="color: var(--warning)">Extra:</span> ${(m.extra||[]).join(', ') || '—'}
-    </div>`).join('') || '<div class="pill">No mismatches 🎉</div>';
+    </div>`).join('') || '<div>No mismatches 🎉</div>';
 
   const sets = data.by_server_ips || {};
   document.getElementById('sets').innerHTML = Object.keys(sets).map(s=>`

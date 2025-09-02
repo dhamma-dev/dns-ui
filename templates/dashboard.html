@@ -9,144 +9,78 @@
   <title>DNS Monitoring Dashboard • v2</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-  <style>
-    :root{
-      --bg1:#667eea; --bg2:#764ba2; --ink:#2d3748; --muted:#718096;
-      --good:#48bb78; --warn:#ed8936; --bad:#f56565; --card:#fff; --edge:#e2e8f0;
-      --chip:#f7fafc; --chip2:#edf2f7;
-    }
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{
-      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
-      background:linear-gradient(135deg,var(--bg1) 0%,var(--bg2) 100%);
-      min-height:100vh;padding:20px;color:var(--ink)
-    }
-    .container{max-width:1400px;margin:0 auto}
-    .header{background:var(--card);border-radius:15px;padding:22px 22px 12px;margin-bottom:18px;box-shadow:0 10px 30px rgba(0,0,0,.1)}
-    .header-top{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-    h1{font-size:1.6rem}
-    .subtitle{color:var(--muted);font-size:.95rem}
-    .pulse{display:flex;gap:12px;align-items:center}
-    .pulse .chip{background:var(--chip);padding:6px 10px;border-radius:999px;border:1px solid var(--edge);font-size:.85rem}
-    .dashboard-grid{
-      display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:18px
-    }
-    .card{
-      background:var(--card);border-radius:12px;padding:16px;box-shadow:0 4px 15px rgba(0,0,0,.08);
-      transition:transform .2s ease,box-shadow .2s ease
-    }
-    .card:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.12)}
-    .card-title{font-weight:600;color:#4a5568;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
-    .filters{
-      display:grid;grid-template-columns:repeat(12,1fr);gap:10px;margin-bottom:12px
-    }
-    .filter-group{grid-column:span 3;display:flex;flex-direction:column}
-    .filter-group.wide{grid-column:span 6}
-    .filter-group label{font-size:.82rem;color:var(--muted);margin-bottom:4px;font-weight:500}
-    select,input{
-      padding:8px 12px;border:1px solid var(--edge);border-radius:8px;background:#fff;color:var(--ink);font-size:.92rem
-    }
-    .btn{
-      padding:10px 14px;background:linear-gradient(135deg,var(--bg1) 0%,var(--bg2) 100%);
-      color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer
-    }
-    .btn.secondary{background:#48bb78}
-    .btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--edge)}
-    .btn.small{padding:6px 10px;border-radius:6px;font-weight:500}
-    .btn + .btn{margin-left:8px}
-    .stat-value{font-size:1.8rem;font-weight:800;margin-bottom:4px}
-    .stat-label{font-size:.8rem;color:#a0aec0;letter-spacing:.05em;text-transform:uppercase}
-    .status-indicator{width:10px;height:10px;border-radius:50%;display:inline-block;margin-left:8px}
-    .status-good{background:var(--good)} .status-warning{background:var(--warn)} .status-error{background:var(--bad)}
-    .tabs{display:flex;gap:8px;margin-bottom:12px;border-bottom:2px solid var(--edge)}
-    .tab{padding:10px 14px;background:none;border:none;color:var(--muted);cursor:pointer;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-2px}
-    .tab.active{color:var(--bg1);border-bottom-color:var(--bg1)}
-    .tab-content{display:none}.tab-content.active{display:block}
-    table{width:100%;border-collapse:collapse}
-    thead{background:#f7fafc;position:sticky;top:0;z-index:1}
-    th,td{padding:10px;border-bottom:1px solid var(--edge);font-size:.92rem;text-align:left;white-space:nowrap}
-    td.wrap{white-space:normal}
-    th.sortable{cursor:pointer}
-    .response-time{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:600}
-    .response-fast{background:#c6f6d5;color:#22543d}
-    .response-medium{background:#fed7aa;color:#7c2d12}
-    .response-slow{background:#fed7d7;color:#742a2a}
-    .alert{padding:12px;border-radius:8px;margin:10px 0}
-    .alert-warning{background:#fef5e7;border-left:4px solid #f39c12;color:#856404}
-    .alert-error{background:#fee;border-left:4px solid #dc3545;color:#721c24}
-    .chart-container{position:relative;height:300px;margin-top:12px}
-    .comparison-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:10px}
-    .comparison-item{padding:12px;background:var(--chip);border-radius:10px;border:1px solid var(--edge)}
-    .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    .spacer{flex:1}
-    .pill{background:var(--chip2);padding:6px 10px;border-radius:999px;border:1px solid var(--edge);font-size:.82rem}
-    .pagination{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:8px}
-    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;padding:2px 6px;border:1px solid var(--edge);border-bottom-width:2px;border-radius:6px;background:#fff;font-size:.8rem}
-    /* Drawer */
-    .drawer{position:fixed;top:0;right:-520px;width:520px;max-width:100%;height:100vh;background:#fff;box-shadow:-12px 0 40px rgba(0,0,0,.16);transition:right .28s ease;padding:18px 16px 22px;z-index:1000;overflow:auto}
-    .drawer.open{right:0}
-    .drawer header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-    .drawer h3{font-size:1.1rem}
-    .link-row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
-    .link-row a{font-size:.82rem;color:#4a67ea;text-decoration:none;border:1px solid var(--edge);padding:4px 8px;border-radius:6px;background:#fff}
-    @media (max-width:900px){.filter-group{grid-column:span 6}.filter-group.wide{grid-column:span 12}}
-  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  {% include '_base_style.html' %}
 </head>
 <body>
-  <div class="container">
-    <div class="header" role="banner">
-      <div class="header-top">
-        <div class="toolbar" style="margin-top:8px">
-  <a class="btn ghost small" href="/servers">Servers</a>
-  <a class="btn ghost small" href="/consistency">Consistency</a>
-  <a class="btn ghost small" href="/time-compare">Time Compare</a>
-   <a class="btn ghost small" href="/points">Points</a>
-</div>
-        <div>
-          <h1>🌐 DNS Monitoring Dashboard <span class="pill">v2</span></h1>
-          <p class="subtitle">Real-time DNS performance, anomalies & ops signals</p>
+  <div id="config-modal" style="display:none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center;">
+    <div style="background: #fff; padding: 30px; border-radius: 12px; width: 500px; max-width: 90%;">
+      <h2>Setup Configuration</h2>
+      <p style="margin: 8px 0 16px; color: #666;">Please provide your API credentials to begin.</p>
+      <form id="config-form">
+        <div class="filter-group wide" style="grid-column: span 12; margin-bottom: 12px;">
+          <label for="api-domain">Server Domain</label>
+          <input id="api-domain" type="text" placeholder="e.g., demo.pm.appneta.com" required>
         </div>
-        <div class="pulse" aria-label="SLO pulse">
-          <span class="chip" id="slo-chip">SLO: <strong id="slo-target">99.9%</strong></span>
-          <span class="chip">Burn rate: <strong id="burn-rate">—</strong></span>
-          <button class="btn small ghost" id="export-btn" title="Export CSV (e)">Export CSV</button>
+        <div class="filter-group wide" style="grid-column: span 12; margin-bottom: 12px;">
+          <label for="org-id">Organization ID</label>
+          <input id="org-id" type="text" placeholder="e.g., 3" required>
         </div>
-      </div>
-      <div class="toolbar" style="margin-top:12px">
-        <input id="global-search" type="search" placeholder="Search domain, server, response code…" aria-label="Search (press /)" style="flex:1;min-width:220px" />
-        <select id="time-range-filter" aria-label="Time Range">
-          <option value="1">Last Hour</option>
-          <option value="6">Last 6 Hours</option>
-          <option value="24" selected>Last 24 Hours</option>
-          <option value="72">Last 3 Days</option>
-          <option value="168">Last Week</option>
-        </select>
-        <button class="btn" id="apply-btn" title="Apply (Enter)">Apply</button>
-        <div class="spacer"></div>
-        <button class="btn small ghost" id="save-view">Save View (s)</button>
-        <select id="saved-views" title="Load saved view" style="min-width:180px">
-          <option value="">Load saved view…</option>
-        </select>
-      </div>
+        <div class="filter-group wide" style="grid-column: span 12; margin-bottom: 12px;">
+          <label for="api-token">API Token</label>
+          <input id="api-token" type="text" placeholder="Token <YOUR_TOKEN>" required>
+        </div>
+        <div style="text-align: right; margin-top: 20px;">
+            <button type="submit" class="btn primary">Save and Continue</button>
+        </div>
+      </form>
     </div>
+  </div>
+
+  <div class="header-bar">
+    <div class="header-bar-content">
+        <h1><span style="font-size: 16px; color: #6A737D; margin-right: 6px;">🌐</span> DNS Monitoring Dashboard</h1>
+        <div class="spacer"></div>
+        <div class="auto-refresh" style="font-size: 12px; color: #586069;">
+            Auto-refresh: ON <span style="color: #D1D5DA; margin: 0 4px;">|</span> Last updated: <span id="last-updated">...</span>
+        </div>
+    </div>
+  </div>
+  <div class="filter-bar">
+    <input id="global-search" type="search" placeholder="Search domain, server, response code…" aria-label="Search" />
+    <input type="text" id="time-range-picker" placeholder="Select a time range" style="width: 240px;">
+    <button class="btn primary" id="apply-btn" title="Apply (Enter)">Apply</button>
+    <div class="spacer"></div>
+    <a class="btn" href="/servers">Servers</a>
+    <a class="btn" href="/consistency">Consistency</a>
+    <a class="btn" href="/time-compare">Time Compare</a>
+    <a class="btn" href="/points">Points</a>
+    <button class="btn" id="export-btn" title="Export CSV (e)">Export CSV</button>
+    <button class="btn" id="save-view">Save View</button>
+    <select id="saved-views" title="Load saved view">
+      <option value="">Load saved view…</option>
+    </select>
+  </div>
+  <div class="container">
 
     <!-- Stats -->
     <div class="dashboard-grid" aria-label="Summary statistics">
-      <div class="card">
-        <div class="card-title">Total Domains <span class="status-indicator status-good"></span></div>
-        <div class="stat-value" id="total-domains">-</div><div class="stat-label">Monitored Domains</div>
+      <div class="metric-card">
+        <div class="stat-label">Total Domains</div>
+        <div class="stat-value" id="total-domains">-</div>
       </div>
-      <div class="card">
-        <div class="card-title">DNS Servers <span class="status-indicator status-good"></span></div>
-        <div class="stat-value" id="total-servers">-</div><div class="stat-label">Active Servers</div>
+      <div class="metric-card">
+        <div class="stat-label">DNS Servers</div>
+        <div class="stat-value" id="total-servers">-</div>
       </div>
-      <div class="card">
-        <div class="card-title">Monitoring Points <span class="status-indicator status-good"></span></div>
-        <div class="stat-value" id="total-appliances">-</div><div class="stat-label">Active Appliances</div>
+      <div class="metric-card">
+        <div class="stat-label">Monitoring Points</div>
+        <div class="stat-value" id="total-appliances">-</div>
       </div>
-      <div class="card">
-        <div class="card-title">Error Rate <span class="status-indicator" id="error-status"></span></div>
-        <div class="stat-value" id="error-rate">-</div><div class="stat-label">Last 24 Hours</div>
+      <div class="metric-card">
+        <div class="stat-label">Error Rate (24h)</div>
+        <div class="stat-value" id="error-rate">-</div>
       </div>
     </div>
 
@@ -191,7 +125,7 @@
         <div class="card-title" style="margin-top:6px">
           Recent DNS Queries
           <div class="spacer"></div>
-          <span class="pill" id="result-count">—</span>
+          <span id="result-count" style="font-size: 12px; color: var(--gray-700);">—</span>
         </div>
 
         <div style="overflow:auto; max-height: 520px;">
@@ -215,7 +149,7 @@
 
         <div class="pagination">
           <button class="btn small ghost" id="prev-page">Prev</button>
-          <span class="pill" id="page-info">Page 1</span>
+          <span id="page-info" style="font-size: 12px; color: var(--gray-700);">Page 1</span>
           <button class="btn small ghost" id="next-page">Next</button>
           <select id="page-size" title="Rows per page">
             <option>50</option><option selected>100</option><option>200</option>
@@ -307,6 +241,7 @@
     let sort = { field: 'timestamp', dir: 'desc' };
     let page = 1, pageSize = 100, totalRows = 0;
     let savedFilters = {};
+    let flatpickrInstance = null;
 
     // --- helpers ---
     const qs = (sel)=>document.querySelector(sel);
@@ -320,10 +255,13 @@
         dns: qs('#dns-server-filter').value || '',
         type: qs('#record-type-filter').value || '',
         code: qs('#response-code-filter').value || '',
-        hours: qs('#time-range-filter').value,
         sort: `${sort.field}:${sort.dir}`,
         page, pageSize
       });
+      if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+        p.append('start', flatpickrInstance.selectedDates[0].toISOString());
+        p.append('end', flatpickrInstance.selectedDates[1].toISOString());
+      }
       history.replaceState(null,'',`?${p.toString()}`);
     }
     function loadStateFromURL(){
@@ -334,7 +272,13 @@
       set('#dns-server-filter','dns');
       set('#record-type-filter','type');
       set('#response-code-filter','code');
-      set('#time-range-filter','hours');
+
+      const start = p.get('start');
+      const end = p.get('end');
+      if (start && end) {
+        flatpickrInstance.setDate([new Date(start), new Date(end)]);
+      }
+
       const s = p.get('sort'); if(s){ const [f,d]=s.split(':'); sort={field:f||'timestamp',dir:d||'desc'} }
       page = parseInt(p.get('page')||'1',10);
       pageSize = parseInt(p.get('pageSize')||'100',10); qs('#page-size').value = pageSize;
@@ -342,6 +286,72 @@
 
     // --- init ---
     document.addEventListener('DOMContentLoaded', async () => {
+      qs('#config-form').addEventListener('submit', handleConfigSubmit);
+
+      const savedConfig = JSON.parse(localStorage.getItem('dnsMonitorConfig'));
+      if (savedConfig && savedConfig.api_base_url) {
+        try {
+            const url = new URL(savedConfig.api_base_url);
+            qs('#api-domain').value = url.hostname;
+        } catch(e) { /* ignore parse error */ }
+        qs('#org-id').value = savedConfig.org_id;
+        qs('#api-token').value = savedConfig.api_token;
+      }
+
+      try {
+        const { data } = await axios.get(`${API_BASE}/api/status`);
+        if (data.configured) {
+          initializeApp();
+        } else {
+          if (savedConfig) {
+            await submitConfig(savedConfig);
+          } else {
+            qs('#config-modal').style.display = 'flex';
+          }
+        }
+      } catch (e) {
+        console.error("Error checking server status", e);
+        alert("Could not connect to the backend server.");
+      }
+    });
+
+    async function handleConfigSubmit(e) {
+        e.preventDefault();
+        const domain = qs('#api-domain').value.trim();
+        if (!domain) {
+            alert("Please enter a server domain.");
+            return;
+        }
+        const config = {
+            api_base_url: `https://${domain}/api/v3/dns/webPath/data`,
+            org_id: qs('#org-id').value.trim(),
+            api_token: qs('#api-token').value.trim(),
+        };
+        await submitConfig(config);
+    }
+
+    async function submitConfig(config) {
+        try {
+            axios.post(`${API_BASE}/api/config`, config);
+            localStorage.setItem('dnsMonitorConfig', JSON.stringify(config));
+            qs('#config-modal').innerHTML = '<h2>Configuration saved. Server is restarting. Reloading page...</h2>';
+            setTimeout(() => {
+                location.reload();
+            }, 2500);
+        } catch (error) {
+            console.error('Configuration failed:', error);
+            alert('Failed to apply configuration. Please check the values and server logs.');
+        }
+    }
+
+    async function initializeApp() {
+      flatpickrInstance = flatpickr("#time-range-picker", {
+        mode: "range",
+        enableTime: true,
+        dateFormat: "Y-m-d H:i",
+        defaultDate: [new Date(Date.now() - 24 * 3600 * 1000), new Date()]
+      });
+
       attachEvents();
       await loadFilterOptions(); // domains/servers
       loadStateFromURL();
@@ -360,7 +370,7 @@
         if(e.key.toLowerCase() === 'e') { e.preventDefault(); exportCSV(); }
         if(e.key === 'Enter' && document.activeElement.closest('input,select')) { applyFilters(); }
       });
-    });
+    }
 
     function attachEvents(){
       // Tabs
@@ -440,20 +450,20 @@
             <strong>${q.target_domain}</strong><br/>
             DNS Server: ${q.dns_server}<br/>
             Avg: <span class="response-time response-slow">${Math.round(q.avg_time)}ms</span>
-          </div>`).join('') || '<div class="pill">None</div>';
+          </div>`).join('') || '<div>None</div>';
 
         const failList = qs('#failed-domains-list');
         failList.innerHTML = (stats.failing_domains||[]).map(d=>`
           <div class="comparison-item">
-            <strong>${d.target_domain}</strong><br/>Errors: <strong style="color:#dc3545">${d.error_count}</strong>
-          </div>`).join('') || '<div class="pill">None</div>';
+            <strong>${d.target_domain}</strong><br/>Errors: <strong style="color:var(--danger)">${d.error_count}</strong>
+          </div>`).join('') || '<div>None</div>';
 
         const {data:anoms} = await axios.get(`${API_BASE}/api/anomalies`);
         qs('#anomaly-list').innerHTML = (anoms||[]).map(a=>`
           <div class="comparison-item">
             <strong>${a.target_domain}</strong> on <em>${a.dns_server}</em><br/>
             spike: ${Math.round(a.value)}ms (z=${a.z.toFixed(2)})
-          </div>`).join('') || '<div class="pill">None detected</div>';
+          </div>`).join('') || '<div>None detected</div>';
 
         // SLO pulse + burn rate (server side also available; light calc here)
         const obj = 99.9; // %
@@ -469,8 +479,7 @@
         domain: qs('#domain-filter').value,
         dns_server: qs('#dns-server-filter').value,
         record_type: qs('#record-type-filter').value,
-        response_code: qs('#response-code-filter').value,
-        time_range: qs('#time-range-filter').value
+        response_code: qs('#response-code-filter').value
       };
     }
 
@@ -480,6 +489,10 @@
         const filters = paramsFromUI();
         const p = new URLSearchParams();
         Object.entries(filters).forEach(([k,v])=>{ if(v) p.append(k,v); });
+        if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+            p.append('start', flatpickrInstance.selectedDates[0].getTime());
+            p.append('end', flatpickrInstance.selectedDates[1].getTime());
+        }
         p.append('page', page);
         p.append('page_size', pageSize);
         p.append('sort', `${sort.field}:${sort.dir}`);
@@ -510,7 +523,7 @@
           <td>${record.dns_server}</td>
           <td>${record.record_type}</td>
           <td><span class="response-time ${cls}">${record.resolution_time}ms</span></td>
-          <td>${record.response_code==='NOERROR' ? '<span style="color:green">✓ NOERROR</span>' : '<span style="color:#dc3545">✗ '+record.response_code+'</span>'}</td>
+          <td>${record.response_code==='NOERROR' ? '<span style="color:var(--success)">✓ NOERROR</span>' : '<span style="color:var(--danger)">✗ '+record.response_code+'</span>'}</td>
           <td class="wrap" style="font-size:.85rem">${ips}</td>
         </tr>`;
       }).join('');
@@ -529,7 +542,36 @@
       qs('#alerts-container').innerHTML = alerts.map(a=>`<div class="alert alert-${a.type}">${a.message}</div>`).join('');
     }
 
-    function applyFilters(){ loadData(); }
+    function applyFilters(){
+      if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+        const start = flatpickrInstance.selectedDates[0].getTime() / 1000;
+        const end = flatpickrInstance.selectedDates[1].getTime() / 1000;
+
+        const applyBtn = qs('#apply-btn');
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Fetching...';
+
+        axios.post(`${API_BASE}/api/fetch_data`, { start, end })
+          .then(response => {
+            console.log(response.data.message);
+            // Simple approach: wait a bit for fetch to happen, then reload data.
+            // A more robust solution would involve polling or websockets.
+            setTimeout(() => {
+                loadData();
+                applyBtn.disabled = false;
+                applyBtn.textContent = 'Apply';
+            }, 5000); // 5 second delay
+          })
+          .catch(error => {
+            console.error("Error initiating data fetch:", error);
+            alert("Failed to start data fetch.");
+            applyBtn.disabled = false;
+            applyBtn.textContent = 'Apply';
+          });
+      } else {
+        loadData();
+      }
+    }
 
     // --- Domain drawer ---
     async function openDomainDrawer(domain){
@@ -544,8 +586,14 @@
         <a href="https://toolbox.googleapps.com/apps/dig/#A/${domain}" target="_blank">Dig</a>
       `;
       // Fetch summary
-      const hours = qs('#time-range-filter').value || 24;
-      const {data:s} = await axios.get(`${API_BASE}/api/domain_summary?domain=${esc(domain)}&hours=${hours}`);
+      const params = new URLSearchParams({ domain: domain });
+      if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+        params.append('start', flatpickrInstance.selectedDates[0].getTime());
+        params.append('end', flatpickrInstance.selectedDates[1].getTime());
+      } else {
+        params.append('hours', 24); // fallback
+      }
+      const {data:s} = await axios.get(`${API_BASE}/api/domain_summary?${params.toString()}`);
       // Grid
       const grid = qs('#drawer-grid');
       const pct = (n)=> (n!=null? n.toFixed(2)+'%':'—');
@@ -572,9 +620,9 @@
       drawerChart = new Chart(ctx, {
         type:'line',
         data:{ labels, datasets:[
-          {label:'Avg (ms)', data:avg, borderColor:'#667eea', backgroundColor:'rgba(102,126,234,.1)', yAxisID:'y', tension:.3},
-          {label:'p95 (ms)', data:p95, borderColor:'#38a169', backgroundColor:'rgba(56,161,105,.1)', yAxisID:'y', tension:.3},
-          {label:'Error %', data:err, borderColor:'#f56565', backgroundColor:'rgba(245,101,101,.08)', yAxisID:'y1', tension:.3}
+          {label:'Avg (ms)', data:avg, borderColor:'var(--primary)', backgroundColor:'rgba(3,102,214,.1)', yAxisID:'y', tension:.3},
+          {label:'p95 (ms)', data:p95, borderColor:'var(--success)', backgroundColor:'rgba(40,167,69,.1)', yAxisID:'y', tension:.3},
+          {label:'Error %', data:err, borderColor:'var(--danger)', backgroundColor:'rgba(220,53,69,.08)', yAxisID:'y1', tension:.3}
         ]},
         options:{
           responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
@@ -618,7 +666,7 @@
           <h4 style="color:#4a5568;margin-bottom:6px">${srv}</h4>
           <div>Avg: <strong>${Math.round(v.avg_time)}ms</strong></div>
           <div>p95: <strong>${Math.round(v.p95)}ms</strong></div>
-          <div>Error: <strong style="color:${v.err>0?'#dc3545':'#28a745'}">${v.err.toFixed(2)}%</strong></div>
+          <div>Error: <strong style="color:${v.err>0?'var(--danger)':'var(--success)'}">${v.err.toFixed(2)}%</strong></div>
           <div style="margin-top:8px;font-size:.86rem">
             ${Object.entries(v.rec).map(([type, st])=>`${type}: ${Math.round(st.avg_time)}ms (${st.min_time}-${st.max_time}ms)`).join('<br/>')}
           </div>
@@ -639,16 +687,14 @@
           if(metric==='err') return item.sample_count? (item.error_count/item.sample_count*100):0;
           return 0;
         }),
-        backgroundColor: ['#667eea','#48bb78','#ed8936','#805ad5','#2b6cb0'][i%5],
-        borderColor: ['#5a67d8','#38a169','#dd6b20','#6b46c1','#2c5282'][i%5],
-        borderWidth:2
+        backgroundColor: ['var(--primary)','var(--success)','var(--warning)','var(--info)','var(--gray-600)'][i%5]
       }));
       if(comparisonChart) comparisonChart.destroy();
       comparisonChart = new Chart(ctx,{
         type:'bar',
         data:{labels:servers,datasets},
         options:{ responsive:true, maintainAspectRatio:false, plugins:{title:{display:true,text: metric==='err'?'Error Rate (%)':'Response Time (ms)'}} ,
-          scales:{y:{beginAtZero:true,title:{display:true,text: metric==='err'?'%':'ms'}}}}
+          scales:{y:{beginAtZero:true,title:{display:true,text: metric==='err'?'%':'ms'}, grid: {color: 'var(--gray-200)'}}, x: {grid: {display:false}}}}
       });
     }
 
@@ -657,7 +703,7 @@
       const domain = qs('#trend-domain').value;
       if(!domain){ alert('Pick a domain'); return; }
       const hours = qs('#trend-window').value;
-      const {data} = await axios.get(`${API_BASE}/api/domain_summary?domain=${esc(domain)}&hours=${hours}`);
+      const {data:s} = await axios.get(`${API_BASE}/api/domain_summary?domain=${esc(domain)}&hours=${hours}`);
       const labels = data.timeseries.map(t=>new Date(t.ts).toLocaleString());
       const avg = data.timeseries.map(t=>t.avg);
       const p95 = data.timeseries.map(t=>t.p95);
@@ -667,20 +713,20 @@
       trendsChart = new Chart(ctx,{
         type:'line',
         data:{labels,datasets:[
-          {label:'Avg (ms)', data:avg, borderColor:'#667eea', backgroundColor:'rgba(102,126,234,.1)', yAxisID:'y', tension:.35},
-          {label:'p95 (ms)', data:p95, borderColor:'#38a169', backgroundColor:'rgba(56,161,105,.1)', yAxisID:'y', tension:.35},
-          {label:'Error %', data:err, borderColor:'#f56565', backgroundColor:'rgba(245,101,101,.08)', yAxisID:'y1', tension:.35},
+          {label:'Avg (ms)', data:avg, borderColor:'var(--primary)', backgroundColor:'rgba(3,102,214,.1)', yAxisID:'y', tension:.35},
+          {label:'p95 (ms)', data:p95, borderColor:'var(--success)', backgroundColor:'rgba(40,167,69,.1)', yAxisID:'y', tension:.35},
+          {label:'Error %', data:err, borderColor:'var(--danger)', backgroundColor:'rgba(220,53,69,.08)', yAxisID:'y1', tension:.35},
         ]},
         options:{
           responsive:true,
           maintainAspectRatio:false,
           interaction:{mode:'index',intersect:false},
           scales:{
-            y:{title:{display:true,text:'ms'}, beginAtZero:true},
+            y:{title:{display:true,text:'ms'}, beginAtZero:true, grid: {color: 'var(--gray-200)'}},
             y1:{position:'right', grid:{drawOnChartArea:false}, beginAtZero:true, title:{display:true,text:'%'}}
           }
         }
-      }); // <- extra } was needed before this
+      });
     }
 
     // --- Saved Views ---
@@ -711,7 +757,9 @@
       qs('#dns-server-filter').value = f.dns_server||'';
       qs('#record-type-filter').value = f.record_type||'';
       qs('#response-code-filter').value = f.response_code||'';
-      qs('#time-range-filter').value = f.time_range||'24';
+      if (f.start && f.end) {
+        flatpickrInstance.setDate([new Date(f.start), new Date(f.end)]);
+      }
       sort = data.sort||sort;
       pageSize = data.pageSize||pageSize; qs('#page-size').value = pageSize;
       await loadData();
@@ -722,6 +770,10 @@
       const f = paramsFromUI();
       const p = new URLSearchParams();
       Object.entries(f).forEach(([k,v])=>{ if(v) p.append(k,v); });
+      if (flatpickrInstance && flatpickrInstance.selectedDates.length === 2) {
+        p.append('start', flatpickrInstance.selectedDates[0].getTime());
+        p.append('end', flatpickrInstance.selectedDates[1].getTime());
+      }
       p.append('sort', `${sort.field}:${sort.dir}`);
       p.append('limit', Math.max(1000, pageSize)); // safe default
       const link = document.createElement('a');

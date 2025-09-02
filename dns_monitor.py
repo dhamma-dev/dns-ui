@@ -4,9 +4,6 @@ DNS Monitoring Dashboard • v2
 
 Environment variables (recommended):
   APP_PORT=8181
-  ORG_ID=3
-  API_BASE_URL=https://demo.pm.appneta.com/api/v3/dns/webPath/data
-  API_TOKEN=Token <REDACTED>
   FETCH_INTERVAL=300       # seconds
   RETENTION_DAYS=30
   SLO_OBJECTIVE=99.9       # percent
@@ -29,22 +26,44 @@ import math
 import io
 import csv
 from itertools import combinations
-
-
+import logging
+from logging.handlers import RotatingFileHandler
 
 # --- Config ---
 APP_PORT       = int(os.getenv("APP_PORT", "8181"))
-API_BASE_URL   = os.getenv("API_BASE_URL", "https://demo.pm.appneta.com/api/v3/dns/webPath/data")
-API_TOKEN      = os.getenv("API_TOKEN", "Token redacted")
-ORG_ID         = int(os.getenv("ORG_ID", "3"))
-FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL", "300"))  # seconds
+FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL", "300"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "30"))
-SLO_OBJECTIVE  = float(os.getenv("SLO_OBJECTIVE", "99.9"))  # %
+SLO_OBJECTIVE  = float(os.getenv("SLO_OBJECTIVE", "99.9"))
 
-DB_PATH = "dns_monitoring.db"
+os.makedirs('instance', exist_ok=True)
+DB_PATH = "instance/dns_monitoring.db"
+CONFIG_PATH = "instance/config.json"
+
+API_BASE_URL, API_TOKEN, ORG_ID = None, None, None
+
+def load_config():
+    global API_BASE_URL, API_TOKEN, ORG_ID
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                config = json.load(f)
+            API_BASE_URL = config.get('api_base_url')
+            API_TOKEN = config.get('api_token')
+            ORG_ID = config.get('org_id')
+            return True
+        except (IOError, json.JSONDecodeError):
+            return False
+    return False
 
 app = Flask(__name__, static_folder=None, template_folder="templates")
 CORS(app)
+
+handler = RotatingFileHandler('server.log', maxBytes=100000, backupCount=3)
+handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+app.logger.addHandler(handler)
+app.logger.setLevel(logging.INFO)
 
 # --- DB utilities ---
 def connect_db():
@@ -78,16 +97,12 @@ class DNSDataCollector:
             web_path_ids TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );''')
-        # indices
         c.execute('CREATE INDEX IF NOT EXISTS idx_domain ON dns_records(target_domain);')
         c.execute('CREATE INDEX IF NOT EXISTS idx_server ON dns_records(dns_server);')
         c.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON dns_records(timestamp);')
         c.execute('CREATE INDEX IF NOT EXISTS idx_appliance ON dns_records(appliance_guid);')
         c.execute('CREATE INDEX IF NOT EXISTS idx_response_code ON dns_records(response_code);')
-        # unique key for idempotency
         c.execute('CREATE UNIQUE INDEX IF NOT EXISTS uniq_record ON dns_records(timestamp, target_domain, dns_server, record_type);')
-
-        # Saved views
         c.execute('''
         CREATE TABLE IF NOT EXISTS saved_views (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,58 +121,58 @@ class DNSDataCollector:
         cur.execute("DELETE FROM dns_records WHERE timestamp < ?", (cutoff,))
         self.conn.commit()
 
-    def fetch_and_store_data(self, org_id=ORG_ID, limit=100):
-        """Fetch data from API and store in database with idempotency."""
-        try:
-            params = {'orgId': org_id, 'limit': limit}
-            headers = {'Authorization': API_TOKEN}
-            r = requests.get(API_BASE_URL, params=params, headers=headers, timeout=30)
-            r.raise_for_status()
-            data = r.json()
+    def fetch_and_store_data(self, org_id, start_time, end_time):
+        page = 1
+        limit = 100
+        while True:
+            try:
+                params = {'orgId': org_id, 'limit': limit, 'page': page}
+                if start_time: params['from'] = int(start_time)
+                if end_time: params['to'] = int(end_time)
+                headers = {'Authorization': API_TOKEN}
+                r = requests.get(API_BASE_URL, params=params, headers=headers, timeout=60)
+                r.raise_for_status()
+                data = r.json()
+                if not data: break
+                cur = self.conn.cursor()
+                for domain_data in data:
+                    try:
+                        target_domain = domain_data.get('targetDomain', '')
+                        appliance_guid = domain_data.get('applianceGuid', '')
+                        interface = domain_data.get('interface', '')
+                        web_path_ids = json.dumps(domain_data.get('webPathIds', []))
+                        for series in domain_data.get('series', []):
+                            ts = series.get('timestamp')
+                            for record in series.get('data', []):
+                                dns_server = record.get('dnsServer', '')
+                                for record_type in ['A', 'AAAA', 'CNAME']:
+                                    if record_type in record:
+                                        rd = record[record_type] or {}
+                                        cur.execute('''
+                                        INSERT OR IGNORE INTO dns_records
+                                        (timestamp, target_domain, dns_server, record_type, response_code, resolution_time,
+                                         resolved_ips, appliance_guid, interface, web_path_ids)
+                                        VALUES (?,?,?,?,?,?,?,?,?,?)
+                                        ''', (ts, target_domain, dns_server, record_type, rd.get('responseCode'), rd.get('resolutionTime'),
+                                              json.dumps(rd.get('resolvedIp', [])), appliance_guid, interface, web_path_ids))
+                    except (AttributeError, KeyError) as e:
+                        app.logger.warning(f"Skipping record due to unexpected structure: {e}")
+                        continue
+                self.conn.commit()
+                if len(data) < limit: break
+                page += 1
+                time.sleep(1)
+            except Exception as e:
+                app.logger.error(f"[_fetch_single_range] Error: {e}", exc_info=True)
+                return False
+        self.last_insert_ts = int(time.time())
+        self.prune_old()
+        return True
 
-            cur = self.conn.cursor()
-            new_rows = 0
-            for domain_data in data:
-                target_domain = domain_data.get('targetDomain', '')
-                appliance_guid = domain_data.get('applianceGuid', '')
-                interface = domain_data.get('interface', '')
-                web_path_ids = json.dumps(domain_data.get('webPathIds', []))
-
-                for series in domain_data.get('series', []):
-                    ts = series.get('timestamp')
-                    for record in series.get('data', []):
-                        dns_server = record.get('dnsServer', '')
-                        for record_type in ['A', 'AAAA', 'CNAME']:
-                            if record_type in record:
-                                rd = record[record_type] or {}
-                                resolution_time = rd.get('resolutionTime')
-                                response_code = rd.get('responseCode')
-                                resolved_ips = json.dumps(rd.get('resolvedIp', []))
-                                try:
-                                    cur.execute('''
-                                    INSERT OR IGNORE INTO dns_records
-                                    (timestamp, target_domain, dns_server, record_type, response_code, resolution_time,
-                                     resolved_ips, appliance_guid, interface, web_path_ids)
-                                    VALUES (?,?,?,?,?,?,?,?,?,?)
-                                    ''', (ts, target_domain, dns_server, record_type, response_code, resolution_time,
-                                          resolved_ips, appliance_guid, interface, web_path_ids))
-                                    new_rows += cur.rowcount
-                                except sqlite3.IntegrityError:
-                                    pass
-            self.conn.commit()
-            self.last_insert_ts = int(time.time())
-            self.prune_old()
-            return True
-        except Exception as e:
-            print(f"[fetch] Error: {e}")
-            return False
-
-    # --- queries ---
     def get_filtered_data(self, filters, page=1, page_size=100, sort="timestamp:desc", count_only=False):
         c = self.conn.cursor()
         q = "FROM dns_records WHERE 1=1"
         params = []
-
         if filters.get('domain'): q += " AND target_domain = ?"; params.append(filters['domain'])
         if filters.get('dns_server'): q += " AND dns_server = ?"; params.append(filters['dns_server'])
         if filters.get('response_code'): q += " AND response_code = ?"; params.append(filters['response_code'])
@@ -167,29 +182,19 @@ class DNSDataCollector:
             q += " AND (target_domain LIKE ? OR dns_server LIKE ? OR response_code LIKE ?)"
             needle = f"%{filters['q']}%"
             params.extend([needle, needle, needle])
-
-        # time window
-        if filters.get('time_range'):
-            hours = int(filters['time_range'])
-            end = int(datetime.utcnow().timestamp() * 1000)
-            start = end - hours*3600*1000
+        if filters.get('start') and filters.get('end'):
+            start = int(filters['start'])
+            end = int(filters['end'])
             q += " AND timestamp BETWEEN ? AND ?"; params.extend([start, end])
-
-        # total count
         if count_only:
             c.execute(f"SELECT COUNT(*) AS cnt {q}", params)
             return c.fetchone()['cnt']
-
-        # sorting
         f, d = (sort.split(':') + ['desc'])[:2]
         f = f if f in {'timestamp','target_domain','dns_server','record_type','resolution_time','response_code'} else 'timestamp'
         d = 'ASC' if d.lower()=='asc' else 'DESC'
         order = f"ORDER BY {f} {d}"
-
-        # pagination
         page = max(1, int(page)); page_size = max(1, min(1000, int(page_size)))
         offset = (page-1)*page_size
-
         c.execute(f"SELECT * {q} {order} LIMIT ? OFFSET ?", params+[page_size, offset])
         rows = [dict(r) for r in c.fetchall()]
         for r in rows:
@@ -208,15 +213,12 @@ class DNSDataCollector:
         stats['total_appliances'] = c.fetchone()['n'] or 0
         c.execute("SELECT COUNT(*) AS n FROM dns_records")
         stats['total_samples'] = c.fetchone()['n'] or 0
-
         c.execute("""
           SELECT response_code, COUNT(*) AS c
           FROM dns_records WHERE response_code != 'NOERROR'
           GROUP BY response_code
         """)
         stats['error_counts'] = {row['response_code']: row['c'] for row in c.fetchall()}
-
-        # slow queries
         c.execute("""
           SELECT target_domain, dns_server, AVG(resolution_time) AS avg_time
           FROM dns_records WHERE resolution_time > 100
@@ -224,8 +226,6 @@ class DNSDataCollector:
           ORDER BY avg_time DESC LIMIT 10
         """)
         stats['slow_queries'] = [dict(r) for r in c.fetchall()]
-
-        # failing domains
         c.execute("""
           SELECT target_domain, COUNT(*) AS error_count
           FROM dns_records WHERE response_code != 'NOERROR'
@@ -253,8 +253,6 @@ class DNSDataCollector:
           GROUP BY dns_server, record_type
         """, params)
         rows = [dict(r) for r in c.fetchall()]
-
-        # Add p95 (per server/type)
         for r in rows:
             c.execute("""
               SELECT resolution_time AS rt FROM dns_records
@@ -264,15 +262,13 @@ class DNSDataCollector:
             r['p95'] = percentile(vals, 95) if vals else None
         return rows
 
-    def domain_summary(self, domain, hours=24):
+    def domain_summary(self, domain, start_ts, end_ts):
         c = self.conn.cursor()
-        end = int(datetime.utcnow().timestamp()*1000)
-        start = end - hours*3600*1000
         c.execute("""
           SELECT resolution_time AS rt, response_code AS code, dns_server AS srv, timestamp AS ts
           FROM dns_records WHERE target_domain=? AND timestamp BETWEEN ? AND ?
           ORDER BY timestamp ASC
-        """, (domain, start, end))
+        """, (domain, start_ts, end_ts))
         rows = [dict(r) for r in c.fetchall()]
         vals = [r['rt'] for r in rows if r['rt'] is not None]
         errors = sum(1 for r in rows if r['code']!='NOERROR')
@@ -290,8 +286,6 @@ class DNSDataCollector:
             e = sum(1 for g in group if g['code']!='NOERROR')
             er = (e/len(group)*100) if group else 0
             timeseries.append({"ts": ts, "avg": avg, "p95": p95, "err_rate": er})
-
-        # server breakdown
         breakdown = []
         for s in servers:
             arr = [r['rt'] for r in rows if r['srv']==s and r['rt'] is not None]
@@ -315,7 +309,6 @@ class DNSDataCollector:
         }
 
     def anomalies(self, hours=24):
-        """Simple z-score anomaly detection per (domain,server) on resolution_time."""
         c = self.conn.cursor()
         end = int(datetime.utcnow().timestamp()*1000)
         start = end - hours*3600*1000
@@ -326,23 +319,19 @@ class DNSDataCollector:
         rows = [dict(r) for r in c.fetchall()]
         by_pair = defaultdict(list)
         for r in rows: by_pair[(r['d'], r['s'])].append(r['rt'])
-
         out = []
         for (d,s), arr in by_pair.items():
             if len(arr) < 20: continue
             mu = statistics.mean(arr)
             sd = statistics.pstdev(arr) or 1.0
-            for v in arr[-5:]:  # only last few samples
+            for v in arr[-5:]:
                 z = (v - mu)/sd
                 if z > 3.0:
                     out.append({"target_domain": d, "dns_server": s, "value": v, "z": z})
-        # top 20 by z
         out.sort(key=lambda x: x['z'], reverse=True)
         return out[:20]
-# --- ADD: inside DNSDataCollector class ---
 
     def servers_summary(self, hours=24):
-        """Aggregate resolver health over time window; include small timeseries per server."""
         c = self.conn.cursor()
         end = int(datetime.utcnow().timestamp()*1000)
         start = end - hours*3600*1000
@@ -355,7 +344,6 @@ class DNSDataCollector:
         by_srv = defaultdict(list)
         for r in rows:
             by_srv[r['s']].append(r)
-
         out = []
         for s, arr in by_srv.items():
             rts = [x['rt'] for x in arr if x['rt'] is not None]
@@ -375,14 +363,12 @@ class DNSDataCollector:
                 'avg': (sum(rts)/len(rts)) if rts else 0,
                 'p95': percentile(rts, 95) if rts else 0,
                 'p99': percentile(rts, 99) if rts else 0,
-                'timeseries': timeseries[-24:]  # keep it light
+                'timeseries': timeseries[-24:]
             })
-        # rank by p95 (then err%)
         out.sort(key=lambda x: (x['p95'] or 0, x['error_rate']), reverse=True)
         return out
 
     def consistency(self, domain, hours=24, record_type=None, servers=None):
-        """Compare resolved IP sets across resolvers; compute Jaccard similarities & mismatches."""
         c = self.conn.cursor()
         end = int(datetime.utcnow().timestamp()*1000)
         start = end - hours*3600*1000
@@ -400,7 +386,6 @@ class DNSDataCollector:
             params.extend(servers)
         c.execute(sql, params)
         rows = [dict(r) for r in c.fetchall()]
-
         by_srv = {}
         for r in rows:
             if r['code'] != 'NOERROR': 
@@ -412,21 +397,14 @@ class DNSDataCollector:
                 pass
             if ips:
                 by_srv.setdefault(r['s'], set()).update(ips)
-
         servers_list = sorted(by_srv.keys())
-        # Pairwise Jaccard
         pairs = []
         for a,b in combinations(servers_list, 2):
             A, B = by_srv.get(a,set()), by_srv.get(b,set())
             inter = len(A & B); uni = len(A | B) or 1
             score = inter/uni
             pairs.append({'a': a, 'b': b, 'jaccard': score, 'overlap': inter, 'union': uni})
-
-        # Overall consistency (mean of pairwise)
         overall = (sum(p['jaccard'] for p in pairs)/len(pairs)) if pairs else 0.0
-
-        # Mismatches = servers whose set != majority set
-        # define reference as the largest set by cardinality
         ref_srv = max(servers_list, key=lambda s: len(by_srv.get(s,set())), default=None)
         ref_set = by_srv.get(ref_srv, set())
         mismatches = []
@@ -437,7 +415,6 @@ class DNSDataCollector:
                     'missing': sorted(list(ref_set - by_srv[s])),
                     'extra': sorted(list(by_srv[s] - ref_set))
                 })
-
         return {
             'domain': domain,
             'record_type': record_type,
@@ -452,14 +429,12 @@ class DNSDataCollector:
         }
 
     def time_compare(self, domain=None, dns_server=None, record_type=None, hours_a=1, hours_b=1, offset_b=None):
-        """Compare two windows: A = now - hours_a, B = now - offset_b .. - offset_b - hours_b."""
         endA = int(datetime.utcnow().timestamp()*1000)
         startA = endA - hours_a*3600*1000
         if offset_b is None:
-            offset_b = hours_b  # immediately preceding window
+            offset_b = hours_b
         endB = startA - offset_b*3600*1000
         startB = endB - hours_b*3600*1000
-
         def query_window(st, en):
             c = self.conn.cursor()
             q = "SELECT resolution_time AS rt, response_code AS code, timestamp AS ts FROM dns_records WHERE timestamp BETWEEN ? AND ?"
@@ -491,10 +466,8 @@ class DNSDataCollector:
             'windowA': {'start': startA, 'end': endA, **query_window(startA, endA)},
             'windowB': {'start': startB, 'end': endB, **query_window(startB, endB)}
         }
-        # --- ADD: inside DNSDataCollector class (alongside servers_summary/consistency etc.) ---
 
     def points_summary(self, hours=24):
-        """Aggregate health by monitoring point (appliance_guid + interface)."""
         c = self.conn.cursor()
         end = int(datetime.utcnow().timestamp()*1000)
         start = end - hours*3600*1000
@@ -509,13 +482,11 @@ class DNSDataCollector:
         for r in rows:
             key = (r['ag'] or '—', r['iface'] or '—')
             by_point[key].append(r)
-
         out = []
         for (ag, iface), arr in by_point.items():
             rts = [x['rt'] for x in arr if x['rt'] is not None]
             samples = len(arr)
             errors = sum(1 for x in arr if x['code'] != 'NOERROR')
-            # per-hour small timeseries
             tsb = bucket_by_hour([{'ts': x['ts'], 'rt': x['rt'], 'code': x['code']} for x in arr])
             timeseries = []
             for ts, g in sorted(tsb.items(), key=lambda kv: kv[0]):
@@ -533,12 +504,10 @@ class DNSDataCollector:
                 'p99': percentile(rts, 99) if rts else 0,
                 'timeseries': timeseries[-24:]
             })
-        # rank by p95 then error%
         out.sort(key=lambda x: (x['p95'] or 0, x['error_rate']), reverse=True)
         return out
 
     def point_detail(self, appliance_guid, hours=24, interface=None):
-        """Deep dive for a single monitoring point: trends, top domains/servers, heatmap."""
         c = self.conn.cursor()
         end = int(datetime.utcnow().timestamp()*1000)
         start = end - hours*3600*1000
@@ -553,8 +522,6 @@ class DNSDataCollector:
             q += " AND interface=?"; params.append(interface)
         c.execute(q, params)
         rows = [dict(r) for r in c.fetchall()]
-
-        # Timeseries
         tsb = bucket_by_hour([{'ts': r['ts'], 'rt': r['rt'], 'code': r['code']} for r in rows])
         timeseries = []
         all_rts = [r['rt'] for r in rows if r['rt'] is not None]
@@ -567,8 +534,6 @@ class DNSDataCollector:
                 'p95': percentile(gr,95) if gr else 0,
                 'err': (sum(1 for g in grp if g['code']!='NOERROR')/len(grp)*100) if grp else 0
             })
-
-        # Domain breakdown
         by_dom = defaultdict(list)
         for r in rows:
             by_dom[r['d']].append(r)
@@ -584,9 +549,7 @@ class DNSDataCollector:
                 'error_rate': (sum(1 for x in arr if x['code']!='NOERROR')/len(arr)*100)
             })
         domains.sort(key=lambda x: (x['p95'], x['error_rate'], x['count']), reverse=True)
-        top_domains = domains[:12]  # also used for heatmap columns
-
-        # Server breakdown
+        top_domains = domains[:12]
         by_srv = defaultdict(list)
         for r in rows:
             by_srv[r['s']].append(r)
@@ -602,8 +565,6 @@ class DNSDataCollector:
                 'error_rate': (sum(1 for x in arr if x['code']!='NOERROR')/len(arr)*100)
             })
         servers.sort(key=lambda x: (x['p95'], x['error_rate'], x['count']), reverse=True)
-
-        # Record-type mix
         types = defaultdict(lambda: {'count':0,'errors':0})
         for r in rows:
             types[r['t']]['count'] += 1
@@ -611,9 +572,7 @@ class DNSDataCollector:
         record_types = [{'type':k,'count':v['count'],
                          'error_rate': (v['errors']/v['count']*100) if v['count'] else 0}
                         for k,v in types.items()]
-
-        # Heatmap (hour x top domain, value = p95)
-        heatmap = []  # rows: [{ts, cells: [p95 per domain in order]}]
+        heatmap = []
         ordered_hours = sorted(tsb.keys())
         for ts in ordered_hours:
             row = {'ts': ts, 'cells': []}
@@ -621,7 +580,6 @@ class DNSDataCollector:
                 vals = [r['rt'] for r in by_dom[d] if r['ts']//3600000 == ts//3600000 and r['rt'] is not None]
                 row['cells'].append(percentile(vals,95) if vals else 0)
             heatmap.append(row)
-
         return {
             'appliance_guid': appliance_guid,
             'interface': interface,
@@ -638,7 +596,6 @@ class DNSDataCollector:
         }
 
     def point_compare(self, a_guid, b_guid, hours=24, a_iface=None, b_iface=None):
-        """Compare two monitoring points over the same window."""
         A = self.point_detail(a_guid, hours, a_iface)
         B = self.point_detail(b_guid, hours, b_iface)
         def slim(x):
@@ -646,13 +603,10 @@ class DNSDataCollector:
                     'avg': x['avg'], 'p95': x['p95'], 'p99': x['p99']}
         return {'A': slim(A), 'B': slim(B)}
 
-
-# --- helpers ---
 def bucket_by_hour(rows):
     buckets = defaultdict(list)
     for r in rows:
         ts = r['ts']
-        # normalize to start-of-hour
         dt = datetime.utcfromtimestamp(ts/1000).replace(minute=0, second=0, microsecond=0)
         buckets[int(dt.timestamp()*1000)].append(r)
     return buckets
@@ -667,14 +621,38 @@ def percentile(arr, p):
 
 collector = DNSDataCollector()
 
-# --- background fetch with backoff ---
-def background_fetch():
-    base = max(30, FETCH_INTERVAL)
-    while True:
-        ok = collector.fetch_and_store_data(ORG_ID, limit=100)
-        time.sleep(base if ok else min(base*2, 900))
+@app.route('/api/status')
+def api_status():
+    return jsonify({'configured': all([API_TOKEN, ORG_ID, API_BASE_URL])})
 
-# --- Routes ---
+@app.route('/api/config', methods=['POST'])
+def api_config():
+    data = request.get_json()
+    if not data or not all(k in data for k in ['api_base_url', 'api_token', 'org_id']):
+        return jsonify({'error': 'Missing required fields'}), 400
+    app.logger.info(f"Writing config to {CONFIG_PATH}: {data}")
+    try:
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(data, f)
+        app.logger.info("Config file written successfully.")
+    except Exception as e:
+        app.logger.error(f"Failed to write config file: {e}")
+        return jsonify({'error': 'Failed to write config file'}), 500
+    return jsonify({'ok': True})
+
+@app.route('/api/fetch_data', methods=['POST'])
+def api_fetch_data():
+    if not all([API_TOKEN, ORG_ID, API_BASE_URL]):
+        return jsonify({'error': 'Application not configured'}), 400
+    data = request.get_json()
+    start_time = data.get('start')
+    end_time = data.get('end')
+    if not start_time or not end_time:
+        return jsonify({'error': 'start and end time parameters are required'}), 400
+
+    collector.fetch_and_store_data(ORG_ID, start_time, end_time)
+    return jsonify({'ok': True, 'message': 'Data fetch initiated.'})
+
 @app.route('/')
 def index():
     return render_template('dashboard.html')
@@ -687,12 +665,16 @@ def get_data():
         'dns_server': request.args.get('dns_server'),
         'response_code': request.args.get('response_code'),
         'record_type': request.args.get('record_type'),
-        'appliance_guid': request.args.get('appliance_guid'),
-        'time_range': request.args.get('time_range', '24')
+        'appliance_guid': request.args.get('appliance_guid')
     }
     page = request.args.get('page', 1, type=int)
     page_size = request.args.get('page_size', 100, type=int)
     sort = request.args.get('sort', 'timestamp:desc')
+    if request.args.get('start') and request.args.get('end'):
+        filters['start'] = request.args.get('start')
+        filters['end'] = request.args.get('end')
+    else:
+        filters['time_range'] = request.args.get('time_range', '24')
     total = collector.get_filtered_data(filters, count_only=True, page=1, page_size=1, sort=sort)
     rows = collector.get_filtered_data(filters, page=page, page_size=page_size, sort=sort)
     return jsonify({"total": total, "rows": rows})
@@ -739,10 +721,15 @@ def api_compare():
 @app.route('/api/domain_summary')
 def api_domain_summary():
     domain = request.args.get('domain')
-    hours = request.args.get('hours', 24, type=int)
     if not domain:
         return jsonify({'error':'domain required'}), 400
-    return jsonify(collector.domain_summary(domain, hours))
+    start_time = request.args.get('start', type=int)
+    end_time = request.args.get('end', type=int)
+    if not start_time or not end_time:
+        hours = request.args.get('hours', 24, type=int)
+        end_time = int(datetime.utcnow().timestamp() * 1000)
+        start_time = end_time - hours * 3600 * 1000
+    return jsonify(collector.domain_summary(domain, start_time, end_time))
 
 @app.route('/api/anomalies')
 def api_anomalies():
@@ -751,7 +738,6 @@ def api_anomalies():
 
 @app.route('/api/export')
 def api_export():
-    """Export current filter set to CSV (streamed)."""
     filters = {
         'q': request.args.get('q'),
         'domain': request.args.get('domain'),
@@ -764,7 +750,6 @@ def api_export():
     sort = request.args.get('sort', 'timestamp:desc')
     limit = min(int(request.args.get('limit', 5000)), 50000)
     rows = collector.get_filtered_data(filters, page=1, page_size=limit, sort=sort)
-    # write to in-memory CSV
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["timestamp","target_domain","dns_server","record_type","response_code","resolution_time","resolved_ips","appliance_guid","interface"])
@@ -777,7 +762,6 @@ def api_export():
     mem.seek(0)
     return send_file(mem, mimetype='text/csv', as_attachment=True, download_name='dns_export.csv')
 
-# --- Saved Views ---
 @app.route('/api/saved_views', methods=['GET','POST'])
 def api_saved_views():
     conn = connect_db(); cur = conn.cursor()
@@ -814,8 +798,6 @@ def api_saved_view(name):
     conn.close()
     return jsonify(out)
 
-# --- ADD: Flask routes (API) ---
-
 @app.route('/api/servers_summary')
 def api_servers_summary():
     hours = request.args.get('hours', 24, type=int)
@@ -841,8 +823,6 @@ def api_time_compare():
     ob = request.args.get('offset_b', None, type=int)
     return jsonify(collector.time_compare(domain, dns_server, record_type, ha, hb, ob))
 
-# --- ADD: HTML page routes (render) ---
-
 @app.route('/servers')
 def page_servers():
     return render_template('servers.html')
@@ -854,7 +834,6 @@ def page_consistency():
 @app.route('/time-compare')
 def page_time_compare():
     return render_template('time_compare.html')
-
 
 @app.route('/api/points_summary')
 def api_points_summary():
@@ -877,37 +856,31 @@ def api_point_compare():
     ai = request.args.get('a_iface'); bi = request.args.get('b_iface')
     return jsonify(collector.point_compare(a, b, hours, ai, bi))
 
-# --- ADD: page route ---
-
 @app.route('/points')
 def page_points():
     return render_template('points.html')
 
-# --- Light SSE stream for "tick" events ---
 @app.route('/api/stream')
 def stream():
     def gen():
         last_ping = 0
         while True:
             time.sleep(10)
-            # if new data since last tick or every 30s, ping
             now = int(time.time())
             if collector.last_insert_ts > last_ping or now % 30 == 0:
                 last_ping = collector.last_insert_ts
                 yield "data: tick\n\n"
     return Response(gen(), mimetype='text/event-stream')
 
-# --- Bootstrap ---
 if __name__ == '__main__':
+    os.makedirs('instance', exist_ok=True)
     os.makedirs('templates', exist_ok=True)
-    # Make sure the template exists under templates/dashboard.html
     if not os.path.exists(os.path.join('templates','dashboard.html')):
         with open(os.path.join('templates','dashboard.html'), 'w', encoding='utf-8') as f:
             f.write('<h2>Place dashboard.html here</h2>')
-    # background fetcher
-    threading.Thread(target=background_fetch, daemon=True).start()
-
-    print("Performing initial data fetch…")
-    collector.fetch_and_store_data(ORG_ID, limit=100)
+    if load_config():
+        app.logger.info("Configuration loaded from file.")
+    else:
+        app.logger.info("Waiting for configuration via web UI...")
     print(f"Starting DNS Dashboard v2 on http://0.0.0.0:{APP_PORT}")
-    app.run(debug=True, host='0.0.0.0', port=APP_PORT)
+    app.run(debug=True, host='0.0.0.0', port=APP_PORT, use_reloader=True)
