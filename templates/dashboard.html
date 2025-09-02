@@ -332,12 +332,10 @@
 
     async function submitConfig(config) {
         try {
-            axios.post(`${API_BASE}/api/config`, config);
+            await axios.post(`${API_BASE}/api/config`, config);
             localStorage.setItem('dnsMonitorConfig', JSON.stringify(config));
-            qs('#config-modal').innerHTML = '<h2>Configuration saved. Server is restarting. Reloading page...</h2>';
-            setTimeout(() => {
-                location.reload();
-            }, 2500);
+            qs('#config-modal').style.display = 'none';
+            initializeApp();
         } catch (error) {
             console.error('Configuration failed:', error);
             alert('Failed to apply configuration. Please check the values and server logs.');

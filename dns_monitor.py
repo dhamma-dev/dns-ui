@@ -646,6 +646,7 @@ def api_config():
         with open(CONFIG_PATH, 'w') as f:
             json.dump(data, f)
         app.logger.info("Config file written successfully.")
+        load_config()
     except Exception as e:
         app.logger.error(f"Failed to write config file: {e}")
         return jsonify({'error': 'Failed to write config file'}), 500
